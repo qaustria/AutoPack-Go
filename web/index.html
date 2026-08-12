@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1d1d1d">
+  <meta name="description" content="Convert Minecraft 1.8.9 texture packs into Roblox assets.">
+  <title>Cone</title>
+  <link rel="icon" href="/cone.png" type="image/png">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="page">
+    <section class="workspace" aria-label="Cone texture pack converter">
+      <div class="cone-side" aria-hidden="true">
+        <div class="cone-art"><img src="/cone.png" alt=""></div>
+      </div>
+
+      <section class="converter" aria-label="Choose and convert a texture pack">
+        <h1 class="sr-only">Cone</h1>
+        <form id="convert-form">
+          <details class="setup-guide" open>
+            <summary>Roblox API setup</summary>
+            <ol>
+              <li><a href="https://create.roblox.com/dashboard/credentials?activeTab=ApiKeysTab" target="_blank" rel="noreferrer">Create an API key</a> in Creator Dashboard.</li>
+              <li>Add <strong>Assets: Read + Write</strong>, <strong>Asset Permissions: Write</strong>, and <strong>Legacy Assets: Manage</strong>.</li>
+              <li>Generate the key, then paste it and your numeric Roblox user ID below.</li>
+            </ol>
+            <p>Leave IP restriction off.</p>
+          </details>
+
+          <div class="credential-fields">
+            <label>
+              <span>Roblox user ID</span>
+              <input id="user-id-input" type="text" inputmode="numeric" pattern="[0-9]+" maxlength="32" placeholder="123456789" autocomplete="off" required>
+            </label>
+            <label>
+              <span>Open Cloud API key</span>
+              <input id="api-key-input" type="password" maxlength="8192" placeholder="Paste API key" autocomplete="off" spellcheck="false" required>
+            </label>
+          </div>
+          <div class="credential-options">
+            <label class="remember-option">
+              <input id="remember-credentials" type="checkbox" checked>
+              <span>Remember on this device</span>
+            </label>
+            <span class="credential-note">Stored only in this browser; never in Cone’s server storage.</span>
+          </div>
+
+          <label class="drop-zone" id="drop-zone" for="pack-input">
+            <input id="pack-input" name="pack" type="file" accept=".zip,application/zip" required>
+            <span class="drop-title">Drop texture pack here</span>
+            <span class="drop-copy">or click to choose a ZIP</span>
+          </label>
+
+          <div class="selected-file" id="selected-file" hidden>
+            <span class="file-badge">ZIP</span>
+            <span class="file-info">
+              <strong id="file-name"></strong>
+              <small id="file-size"></small>
+            </span>
+            <button class="text-button" id="remove-file" type="button">Remove</button>
+          </div>
+
+          <button class="primary-button" id="convert-button" type="submit" disabled>Port pack</button>
+        </form>
+
+        <section class="progress-panel" id="progress-panel" aria-live="polite" hidden>
+          <div class="status-row">
+            <div>
+              <p class="status-label" id="status-label">Preparing</p>
+              <p class="status-detail" id="status-detail">Reading texture pack…</p>
+            </div>
+            <span class="status-percent" id="status-percent">0%</span>
+          </div>
+          <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progress-track">
+            <span id="progress-bar"></span>
+          </div>
+          <div class="activity-log" id="activity-log" role="log" aria-label="Porting log" aria-live="polite"></div>
+          <p class="status-error" id="status-error" hidden></p>
+        </section>
+
+        <section class="result-panel" id="result-panel" aria-live="polite" hidden>
+          <div class="result-heading">
+            <div>
+              <h2>JSON ready</h2>
+              <p>Copy this into your game configuration.</p>
+            </div>
+            <button class="copy-button" id="copy-button" type="button">Copy JSON</button>
+          </div>
+          <pre class="json-output" id="json-output" tabindex="0"></pre>
+        </section>
+      </section>
+
+      <p class="open-source-note">Cone is fully open-source. <a class="github-link" href="https://github.com/qaustria/AutoPack-Go" target="_blank" rel="noreferrer">GitHub</a></p>
+    </section>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-package utils
+package tests
 
 import (
 	"bytes"
@@ -8,6 +8,15 @@ import (
 	"image/color"
 	"image/png"
 	"testing"
+
+	. "autopack/utils"
+)
+
+const (
+	testGLBMagic   = 0x46546c67
+	testGLBVersion = 2
+	testChunkJSON  = 0x4e4f534a
+	testChunkBIN   = 0x004e4942
 )
 
 func TestEncodeGLBIsSelfContainedAndValidlyStructured(t *testing.T) {
@@ -27,17 +36,17 @@ func TestEncodeGLBIsSelfContainedAndValidlyStructured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := binary.LittleEndian.Uint32(glb[0:4]); got != glbMagic {
+	if got := binary.LittleEndian.Uint32(glb[0:4]); got != testGLBMagic {
 		t.Fatalf("magic = %#x", got)
 	}
-	if got := binary.LittleEndian.Uint32(glb[4:8]); got != glbVersion {
+	if got := binary.LittleEndian.Uint32(glb[4:8]); got != testGLBVersion {
 		t.Fatalf("version = %d", got)
 	}
 	if got := int(binary.LittleEndian.Uint32(glb[8:12])); got != len(glb) {
 		t.Fatalf("declared length %d != %d", got, len(glb))
 	}
 	jsonLen := int(binary.LittleEndian.Uint32(glb[12:16]))
-	if got := binary.LittleEndian.Uint32(glb[16:20]); got != chunkJSON {
+	if got := binary.LittleEndian.Uint32(glb[16:20]); got != testChunkJSON {
 		t.Fatalf("first chunk = %#x", got)
 	}
 	var doc map[string]any
@@ -56,7 +65,7 @@ func TestEncodeGLBIsSelfContainedAndValidlyStructured(t *testing.T) {
 	}
 	binHeader := 20 + jsonLen
 	binLen := int(binary.LittleEndian.Uint32(glb[binHeader : binHeader+4]))
-	if got := binary.LittleEndian.Uint32(glb[binHeader+4 : binHeader+8]); got != chunkBIN {
+	if got := binary.LittleEndian.Uint32(glb[binHeader+4 : binHeader+8]); got != testChunkBIN {
 		t.Fatalf("second chunk = %#x", got)
 	}
 	if binHeader+8+binLen != len(glb) {

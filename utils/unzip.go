@@ -11,14 +11,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 )
 
 const (
 	maxPackFiles         = 100_000
 	maxPackFileSize      = 128 << 20 // 128 MiB per entry.
-	maxPackExtractedSize = 1 << 30  // 1 GiB total.
+	maxPackExtractedSize = 1 << 30   // 1 GiB total.
 )
 
 // TexturePack is a temporarily extracted Minecraft 1.8.9 texture pack.
@@ -45,8 +47,9 @@ func (p *TexturePack) Cleanup() error {
 	return nil
 }
 
-// UnzipTexturePack safely extracts a Minecraft 1.8.9 texture-pack ZIP to a
-// private temporary directory and discovers the textures AutoPack uses.
+// UnzipTexturePack safely extracts the relevant contents of a Minecraft 1.8.9
+// texture-pack ZIP to a private temporary directory and discovers the textures
+// AutoPack uses. Unrelated pack files are validated but never decompressed.
 //
 // Missing textures are reported in TexturePack.Missing instead of causing an
 // error because resource packs often override only some vanilla assets. The
@@ -84,6 +87,12 @@ func UnzipTexturePack(zipPath string) (_ *TexturePack, err error) {
 }
 
 func extractZIP(files []*zip.File, destination string) error {
+	type extractionJob struct {
+		entry  *zip.File
+		target string
+	}
+	jobs := make([]extractionJob, 0, len(files))
+	wanted := requestedTexturePaths()
 	var total uint64
 	for _, entry := range files {
 		if entry.FileInfo().Mode()&os.ModeSymlink != 0 {
@@ -106,22 +115,72 @@ func extractZIP(files []*zip.File, destination string) error {
 		}
 		target := filepath.Join(destination, relative)
 		if entry.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0o755); err != nil {
-				return fmt.Errorf("create extracted directory for %q: %w", entry.Name, err)
-			}
 			continue
 		}
 		if !entry.Mode().IsRegular() {
 			return fmt.Errorf("texture-pack ZIP entry %q is not a regular file", entry.Name)
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return fmt.Errorf("create extracted directory for %q: %w", entry.Name, err)
+		if !isRequestedTexturePath(filepath.ToSlash(relative), wanted) {
+			continue
 		}
-		if err := extractFile(entry, target); err != nil {
-			return err
-		}
+		jobs = append(jobs, extractionJob{entry: entry, target: target})
 	}
-	return nil
+
+	workers := runtime.GOMAXPROCS(0)
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > 32 {
+		workers = 32
+	}
+	if workers > len(jobs) {
+		workers = len(jobs)
+	}
+	if workers == 0 {
+		return nil
+	}
+	queue := make(chan extractionJob, len(jobs))
+	for _, job := range jobs {
+		queue <- job
+	}
+	close(queue)
+	done := make(chan struct{})
+	var cancelOnce sync.Once
+	var firstErr error
+	var wait sync.WaitGroup
+	wait.Add(workers)
+	for worker := 0; worker < workers; worker++ {
+		go func() {
+			defer wait.Done()
+			for {
+				select {
+				case <-done:
+					return
+				case job, ok := <-queue:
+					if !ok {
+						return
+					}
+					if err := os.MkdirAll(filepath.Dir(job.target), 0o755); err != nil {
+						err = fmt.Errorf("create extracted directory for %q: %w", job.entry.Name, err)
+						cancelOnce.Do(func() {
+							firstErr = err
+							close(done)
+						})
+						return
+					}
+					if err := extractFile(job.entry, job.target); err != nil {
+						cancelOnce.Do(func() {
+							firstErr = err
+							close(done)
+						})
+						return
+					}
+				}
+			}
+		}()
+	}
+	wait.Wait()
+	return firstErr
 }
 
 func safeZIPPath(name string) (string, error) {
@@ -175,6 +234,33 @@ type textureSpec struct {
 	key        string
 	relative   string
 	alternates []string
+}
+
+func requestedTexturePaths() map[string]struct{} {
+	paths := make(map[string]struct{})
+	for _, spec := range requestedTextures() {
+		paths[strings.ToLower(filepath.ToSlash(spec.relative))] = struct{}{}
+		for _, alternate := range spec.alternates {
+			paths[strings.ToLower(filepath.ToSlash(alternate))] = struct{}{}
+		}
+	}
+	const itemRoot = "assets/minecraft/textures/items/"
+	paths[itemRoot+"potion_overlay.png"] = struct{}{}
+	paths[itemRoot+"potion_bottle_drinkable.png"] = struct{}{}
+	return paths
+}
+
+func isRequestedTexturePath(path string, wanted map[string]struct{}) bool {
+	path = strings.ToLower(filepath.ToSlash(path))
+	if _, exists := wanted[path]; exists {
+		return true
+	}
+	for candidate := range wanted {
+		if strings.HasSuffix(path, "/"+candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 func requestedTextures() []textureSpec {
@@ -304,6 +390,18 @@ func generatePotions(result *TexturePack, index map[string][]string) error {
 		result.Missing = append(result.Missing, "jump_pot", "speed_pot")
 		return nil
 	}
+	overlayImage, err := decodePNG(overlay)
+	if err != nil {
+		return err
+	}
+	bottleImage, err := decodePNG(bottle)
+	if err != nil {
+		return err
+	}
+	if overlayImage.Bounds().Dx() != bottleImage.Bounds().Dx() || overlayImage.Bounds().Dy() != bottleImage.Bounds().Dy() {
+		return fmt.Errorf("potion overlay is %dx%d but bottle is %dx%d",
+			overlayImage.Bounds().Dx(), overlayImage.Bounds().Dy(), bottleImage.Bounds().Dx(), bottleImage.Bounds().Dy())
+	}
 	variants := []struct {
 		name string
 		tint color.NRGBA
@@ -315,39 +413,41 @@ func generatePotions(result *TexturePack, index map[string][]string) error {
 	if err := os.MkdirAll(generatedDir, 0o755); err != nil {
 		return fmt.Errorf("create generated-potion directory: %w", err)
 	}
-	for _, variant := range variants {
-		output := filepath.Join(generatedDir, variant.name+".png")
-		if err := renderPotion(overlay, bottle, output, variant.tint); err != nil {
-			return fmt.Errorf("generate %s: %w", variant.name, err)
+	paths := make([]string, len(variants))
+	errorsByVariant := make([]error, len(variants))
+	var wait sync.WaitGroup
+	wait.Add(len(variants))
+	for index, variant := range variants {
+		go func() {
+			defer wait.Done()
+			output := filepath.Join(generatedDir, variant.name+".png")
+			errorsByVariant[index] = renderPotion(overlayImage, bottleImage, output, variant.tint)
+			paths[index] = output
+		}()
+	}
+	wait.Wait()
+	for index, variant := range variants {
+		if errorsByVariant[index] != nil {
+			return fmt.Errorf("generate %s: %w", variant.name, errorsByVariant[index])
 		}
-		result.Textures[variant.name] = output
+		result.Textures[variant.name] = paths[index]
 	}
 	return nil
 }
 
-func renderPotion(overlayPath, bottlePath, outputPath string, tint color.NRGBA) error {
-	overlay, err := decodePNG(overlayPath)
-	if err != nil {
-		return err
-	}
-	bottle, err := decodePNG(bottlePath)
-	if err != nil {
-		return err
-	}
-	if overlay.Bounds().Dx() != bottle.Bounds().Dx() || overlay.Bounds().Dy() != bottle.Bounds().Dy() {
-		return fmt.Errorf("potion overlay is %dx%d but bottle is %dx%d",
-			overlay.Bounds().Dx(), overlay.Bounds().Dy(), bottle.Bounds().Dx(), bottle.Bounds().Dy())
-	}
+func renderPotion(overlay, bottle image.Image, outputPath string, tint color.NRGBA) error {
 	bounds := image.Rect(0, 0, overlay.Bounds().Dx(), overlay.Bounds().Dy())
 	output := image.NewNRGBA(bounds)
 	for y := 0; y < bounds.Dy(); y++ {
 		for x := 0; x < bounds.Dx(); x++ {
-			r16, g16, b16, a16 := overlay.At(overlay.Bounds().Min.X+x, overlay.Bounds().Min.Y+y).RGBA()
+			source := color.NRGBAModel.Convert(
+				overlay.At(overlay.Bounds().Min.X+x, overlay.Bounds().Min.Y+y),
+			).(color.NRGBA)
 			output.SetNRGBA(x, y, color.NRGBA{
-				R: uint8((r16 >> 8) * uint32(tint.R) / 255),
-				G: uint8((g16 >> 8) * uint32(tint.G) / 255),
-				B: uint8((b16 >> 8) * uint32(tint.B) / 255),
-				A: uint8((a16 >> 8) * uint32(tint.A) / 255),
+				R: uint8(uint16(source.R) * uint16(tint.R) / 255),
+				G: uint8(uint16(source.G) * uint16(tint.G) / 255),
+				B: uint8(uint16(source.B) * uint16(tint.B) / 255),
+				A: uint8(uint16(source.A) * uint16(tint.A) / 255),
 			})
 		}
 	}

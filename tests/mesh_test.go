@@ -1,10 +1,12 @@
-package utils
+package tests
 
 import (
 	"image"
 	"image/color"
 	"math"
 	"testing"
+
+	. "autopack/utils"
 )
 
 func TestFullGridGreedyMeshAndBlenderDimensions(t *testing.T) {
