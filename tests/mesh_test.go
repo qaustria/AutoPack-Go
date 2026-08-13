@@ -96,6 +96,37 @@ func TestAlphaThreshold(t *testing.T) {
 	}
 }
 
+func TestDefaultMeshGeneratorNeverMeshesLowAlphaBackground(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 128, 128))
+	// Reproduce trauma.zip's broken canvas: almost every background pixel has
+	// alpha 2 instead of alpha 0. The item itself is a small opaque silhouette.
+	for y := 0; y < 128; y++ {
+		for x := 0; x < 128; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 255, G: 255, B: 255, A: 2})
+		}
+	}
+	for y := 24; y < 104; y++ {
+		for x := 58; x < 70; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 120, G: 45, B: 20, A: 255})
+		}
+	}
+
+	mesh, stats, err := BuildGreedyMesh(img, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.OpaqueCells != 12*80 {
+		t.Fatalf("opaque cells = %d, want only the %d item pixels", stats.OpaqueCells, 12*80)
+	}
+	for vertex := 0; vertex < len(mesh.TexCoords); vertex += 2 {
+		u := mesh.TexCoords[vertex]
+		v := mesh.TexCoords[vertex+1]
+		if u <= 0 || u >= 1 || v <= 0 || v >= 1 {
+			t.Fatalf("background reached mesh UVs at (%g, %g)", u, v)
+		}
+	}
+}
+
 func TestDetectBackgroundAlphaNoiseThresholdRejectsNoisyFullPlane(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
 	for y := 0; y < 16; y++ {

@@ -21,9 +21,13 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		PlaneSize:      2.0,
-		Thickness:      0.07,
-		AlphaThreshold: 0,
+		PlaneSize: 2.0,
+		Thickness: 0.07,
+		// Match the original mesh generator: alpha values below 10 are
+		// transparent. Some packs (including trauma.zip) fill the entire PNG
+		// canvas with exporter noise at alpha 1-4; accepting every non-zero
+		// value turns that noise into a solid rectangular mesh.
+		AlphaThreshold: 9,
 		RotateX:        90,
 		RotateY:        -45,
 		RotateZ:        0,
