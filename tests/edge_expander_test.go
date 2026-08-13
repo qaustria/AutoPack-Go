@@ -62,3 +62,17 @@ func TestEdgeExpandTieUsesPythonBFSSeedOrder(t *testing.T) {
 		t.Fatalf("equal-distance source color = %v, want left/red seed", got)
 	}
 }
+
+func TestResizeTextureRemovesNearTransparentBackgroundNoise(t *testing.T) {
+	source := image.NewNRGBA(image.Rect(0, 0, 2, 1))
+	source.SetNRGBA(0, 0, color.NRGBA{R: 230, G: 240, B: 250, A: 4})
+	source.SetNRGBA(1, 0, color.NRGBA{R: 12, G: 34, B: 56, A: 255})
+
+	result := ResizeTexture(source)
+	if got := result.NRGBAAt(0, 0); got != (color.NRGBA{}) {
+		t.Fatalf("noisy transparent background = %v, want fully transparent", got)
+	}
+	if got := result.NRGBAAt(511, 0); got != (color.NRGBA{R: 12, G: 34, B: 56, A: 255}) {
+		t.Fatalf("visible texture pixel = %v", got)
+	}
+}

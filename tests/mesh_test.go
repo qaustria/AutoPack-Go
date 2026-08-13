@@ -96,6 +96,28 @@ func TestAlphaThreshold(t *testing.T) {
 	}
 }
 
+func TestDefaultAlphaThresholdRejectsNoisyFullPlane(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 4})
+		}
+	}
+	for y := 5; y < 11; y++ {
+		for x := 7; x < 9; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
+		}
+	}
+
+	_, stats, err := BuildGreedyMesh(img, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.OpaqueCells != 12 {
+		t.Fatalf("opaque cells = %d, want only 12 real item pixels", stats.OpaqueCells)
+	}
+}
+
 func TestNonSquareImageKeepsAspectRatio(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 4, 2))
 	for y := 0; y < 2; y++ {

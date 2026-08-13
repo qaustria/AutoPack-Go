@@ -23,7 +23,7 @@ func DefaultConfig() Config {
 	return Config{
 		PlaneSize:      2.0,
 		Thickness:      0.07,
-		AlphaThreshold: 0,
+		AlphaThreshold: TextureAlphaThreshold,
 		RotateX:        90,
 		RotateY:        -45,
 		RotateZ:        0,
