@@ -24,6 +24,14 @@ if [ ! -f "$source_binary" ]; then
     exit 1
 fi
 
+# Older installations may also have a per-user Cone unit. Stop and disable it
+# before starting the system unit so an outdated process cannot retain port 8080.
+service_user=$(systemctl show cone -p User --value 2>/dev/null || true)
+if [ -n "$service_user" ] && service_uid=$(id -u "$service_user" 2>/dev/null); then
+    runuser -u "$service_user" -- env XDG_RUNTIME_DIR="/run/user/$service_uid" \
+        systemctl --user disable --now cone.service >/dev/null 2>&1 || true
+fi
+
 systemctl stop cone
 install -m 0755 "$source_binary" "$repo_dir/cone"
 systemctl start cone
