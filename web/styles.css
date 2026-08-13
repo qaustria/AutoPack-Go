@@ -1,6 +1,6 @@
 @font-face {
   font-family: "Cone Sans";
-  src: url("/fonts/inter-var.woff2?v=144") format("woff2");
+  src: url("/fonts/inter-var.woff2?v=146") format("woff2");
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
@@ -879,7 +879,118 @@ input:focus-visible,
 
   .copy-button,
   .secondary-button {
+    min-width: 0;
     width: 100%;
+    flex: 1 1 0;
+  }
+}
+
+/* A completed port has two extra panels. Compact the desktop workspace only
+   after the result arrives so the JSON and both actions remain inside the
+   viewport without changing the relaxed initial upload layout. */
+@media (min-width: 821px) {
+  body.has-result .page {
+    padding-block: 12px;
+  }
+
+  body.has-result .workspace {
+    min-height: 0;
+    align-items: start;
+    gap: 10px 40px;
+    padding: 20px 40px 14px;
+  }
+
+  body.has-result .cone-art {
+    width: min(270px, 100%);
+  }
+
+  body.has-result .converter-intro {
+    margin-bottom: 9px;
+  }
+
+  body.has-result .setup-guide {
+    margin-bottom: 8px;
+  }
+
+  body.has-result .setup-guide summary {
+    padding: 9px 13px;
+  }
+
+  body.has-result .credential-fields input {
+    height: 38px;
+  }
+
+  body.has-result .credential-fields label {
+    gap: 5px;
+  }
+
+  body.has-result .credential-options {
+    margin: 5px 0 8px;
+  }
+
+  body.has-result .drop-zone {
+    min-height: 130px;
+    padding: 14px 32px;
+  }
+
+  body.has-result .drop-kicker {
+    margin-bottom: 7px;
+  }
+
+  body.has-result .drop-title {
+    font-size: 26px;
+    line-height: 1.2;
+  }
+
+  body.has-result .drop-copy {
+    margin-top: 8px;
+    font-size: 12px;
+  }
+
+  body.has-result .selected-file {
+    margin-top: 8px;
+    padding: 8px 12px;
+  }
+
+  body.has-result .file-badge {
+    width: 34px;
+    height: 34px;
+  }
+
+  body.has-result .primary-button {
+    min-height: 40px;
+    margin-top: 8px;
+  }
+
+  body.has-result .progress-panel,
+  body.has-result .result-panel {
+    margin-top: 8px;
+    padding: 12px;
+  }
+
+  body.has-result .progress-track {
+    margin-top: 9px;
+  }
+
+  body.has-result .activity-log {
+    max-height: 82px;
+    margin-top: 9px;
+    padding: 8px 10px;
+  }
+
+  body.has-result .copy-button,
+  body.has-result .secondary-button {
+    min-height: 40px;
+  }
+
+  body.has-result .json-output {
+    max-height: 92px;
+    margin-top: 9px;
+    padding: 10px;
+  }
+
+  body.has-result .open-source-note {
+    padding: 2px;
   }
 }
 

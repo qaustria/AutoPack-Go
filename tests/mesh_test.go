@@ -189,6 +189,44 @@ func TestDetectBackgroundAlphaNoiseThresholdPreservesNormalAntialiasing(t *testi
 	}
 }
 
+func TestRemoveTinyAlphaIslandsDropsOnlyDetachedArtifacts(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 32))
+	for y := 5; y < 25; y++ {
+		for x := 5; x < 25; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 90, A: 255})
+		}
+	}
+	// Two-pixel exporter defect: 0.5% of the 400-pixel silhouette.
+	img.SetNRGBA(29, 1, color.NRGBA{G: 255, A: 255})
+	img.SetNRGBA(30, 1, color.NRGBA{G: 255, A: 255})
+	// Five pixels are 1.25% and therefore treated as intentional artwork.
+	for x := 0; x < 5; x++ {
+		img.SetNRGBA(x, 30, color.NRGBA{B: 255, A: 255})
+	}
+
+	if removed := RemoveTinyAlphaIslands(img, 9); removed != 2 {
+		t.Fatalf("removed island pixels = %d, want 2", removed)
+	}
+	if img.NRGBAAt(29, 1).A != 0 || img.NRGBAAt(30, 1).A != 0 {
+		t.Fatal("tiny detached artifact remains visible")
+	}
+	for x := 0; x < 5; x++ {
+		if img.NRGBAAt(x, 30).A != 255 {
+			t.Fatal("intentional detached component was removed")
+		}
+	}
+}
+
+func TestRemoveTinyAlphaIslandsUsesEightWayConnectivity(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 20, 20))
+	for index := 0; index < 12; index++ {
+		img.SetNRGBA(index, index, color.NRGBA{A: 255})
+	}
+	if removed := RemoveTinyAlphaIslands(img, 9); removed != 0 {
+		t.Fatalf("diagonal pixel art lost %d pixels", removed)
+	}
+}
+
 func TestNonSquareImageKeepsAspectRatio(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 4, 2))
 	for y := 0; y < 2; y++ {

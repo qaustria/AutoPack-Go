@@ -131,6 +131,17 @@ func TestWebHandlerServesFrontendWithSecurityHeaders(t *testing.T) {
 	if fontResponse.Code != http.StatusOK || !strings.Contains(fontResponse.Header().Get("Content-Type"), "font/woff2") {
 		t.Fatalf("GET font = %d %q", fontResponse.Code, fontResponse.Header().Get("Content-Type"))
 	}
+	for path, marker := range map[string]string{
+		"/styles.css": "body.has-result .drop-zone",
+		"/app.js":     `classList.add("has-result")`,
+	} {
+		assetRequest := httptest.NewRequest(http.MethodGet, path, nil)
+		assetResponse := httptest.NewRecorder()
+		handler.ServeHTTP(assetResponse, assetRequest)
+		if assetResponse.Code != http.StatusOK || !strings.Contains(assetResponse.Body.String(), marker) {
+			t.Fatalf("GET %s omits completed-layout marker %q", path, marker)
+		}
+	}
 }
 
 func TestWebHandlerStreamsProgressAndJSONResult(t *testing.T) {

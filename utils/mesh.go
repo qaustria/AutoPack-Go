@@ -99,6 +99,89 @@ func RemoveBackgroundAlphaNoise(img *image.NRGBA) int {
 	return threshold
 }
 
+// RemoveTinyAlphaIslands clears detached alpha components smaller than one
+// percent of the largest visible component. Eight-way connectivity preserves
+// normal pixel-art diagonals, while removing isolated exporter artifacts that
+// become large floating blocks after nearest-neighbor upscaling.
+func RemoveTinyAlphaIslands(img *image.NRGBA, alphaThreshold int) int {
+	if img == nil || alphaThreshold < 0 || alphaThreshold > 255 {
+		return 0
+	}
+	bounds := img.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	if width == 0 || height == 0 {
+		return 0
+	}
+	visible := func(index int) bool {
+		x := bounds.Min.X + index%width
+		y := bounds.Min.Y + index/width
+		return int(img.Pix[img.PixOffset(x, y)+3]) > alphaThreshold
+	}
+
+	visited := make([]bool, width*height)
+	components := make([][]int, 0, 4)
+	queue := make([]int, 0, 256)
+	for start := range visited {
+		if visited[start] || !visible(start) {
+			continue
+		}
+		visited[start] = true
+		queue = append(queue[:0], start)
+		component := make([]int, 0, 256)
+		for len(queue) != 0 {
+			current := queue[0]
+			queue = queue[1:]
+			component = append(component, current)
+			x, y := current%width, current/width
+			for dy := -1; dy <= 1; dy++ {
+				for dx := -1; dx <= 1; dx++ {
+					if dx == 0 && dy == 0 {
+						continue
+					}
+					nx, ny := x+dx, y+dy
+					if nx < 0 || nx >= width || ny < 0 || ny >= height {
+						continue
+					}
+					neighbor := ny*width + nx
+					if visited[neighbor] || !visible(neighbor) {
+						continue
+					}
+					visited[neighbor] = true
+					queue = append(queue, neighbor)
+				}
+			}
+		}
+		components = append(components, component)
+	}
+	if len(components) < 2 {
+		return 0
+	}
+
+	largest := 0
+	for _, component := range components {
+		if len(component) > largest {
+			largest = len(component)
+		}
+	}
+	removed := 0
+	for _, component := range components {
+		if len(component)*100 >= largest {
+			continue
+		}
+		for _, index := range component {
+			x := bounds.Min.X + index%width
+			y := bounds.Min.Y + index/width
+			offset := img.PixOffset(x, y)
+			img.Pix[offset] = 0
+			img.Pix[offset+1] = 0
+			img.Pix[offset+2] = 0
+			img.Pix[offset+3] = 0
+			removed++
+		}
+	}
+	return removed
+}
+
 func (c Config) Validate() error {
 	if !finite(c.PlaneSize) || c.PlaneSize <= 0 {
 		return errors.New("plane-size must be finite and greater than zero")

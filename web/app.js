@@ -183,6 +183,7 @@ function updateConvertState() {
 }
 
 function resetOutput() {
+  document.body.classList.remove("has-result");
   progressPanel.hidden = true;
   resultPanel.hidden = true;
   statusError.hidden = true;
@@ -214,6 +215,7 @@ function updateProgress(percent, label, detail) {
 }
 
 function showError(message) {
+  document.body.classList.remove("has-result");
   progressPanel.hidden = false;
   resultPanel.hidden = true;
   statusLabel.textContent = "Couldn’t convert pack";
@@ -263,6 +265,7 @@ function handleResult(event) {
   resultJSON = JSON.stringify(event.result);
   jsonOutput.textContent = resultJSON;
   resultPanel.hidden = false;
+  document.body.classList.add("has-result");
   setConeState("accepted");
 }
 

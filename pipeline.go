@@ -63,6 +63,7 @@ type cachedTexture struct {
 	Resized             *image.NRGBA
 	Expanded            *image.NRGBA
 	AlphaNoiseThreshold int
+	RemovedIslandPixels int
 }
 
 // preparationConcurrency keeps every CPU core busy without allowing machines
@@ -393,6 +394,7 @@ func cachePipelineTextures(ctx context.Context, textures map[string]string, log 
 	sort.Strings(keys)
 
 	entries := make([]cachedTexture, len(keys))
+	alphaThreshold := utils.DefaultConfig().AlphaThreshold
 	logPipeline(log, fmt.Sprintf("Decoding and resizing %d textures", len(keys)))
 	if err := parallelFor(ctx, len(keys), preparationConcurrency(), func(index int) error {
 		key := keys[index]
@@ -402,6 +404,7 @@ func cachePipelineTextures(ctx context.Context, textures map[string]string, log 
 		}
 		entries[index].Resized = utils.ResizeTexture(img)
 		entries[index].AlphaNoiseThreshold = utils.RemoveBackgroundAlphaNoise(entries[index].Resized)
+		entries[index].RemovedIslandPixels = utils.RemoveTinyAlphaIslands(entries[index].Resized, alphaThreshold)
 		return nil
 	}); err != nil {
 		return nil, err
@@ -415,6 +418,15 @@ func cachePipelineTextures(ctx context.Context, textures map[string]string, log 
 	}
 	if len(cleanedAlpha) > 0 {
 		logPipeline(log, "Removed invalid transparent-background noise from "+strings.Join(cleanedAlpha, ", "))
+	}
+	var cleanedIslands []string
+	for index, entry := range entries {
+		if entry.RemovedIslandPixels > 0 {
+			cleanedIslands = append(cleanedIslands, fmt.Sprintf("%s (%d pixels)", keys[index], entry.RemovedIslandPixels))
+		}
+	}
+	if len(cleanedIslands) > 0 {
+		logPipeline(log, "Removed detached texture artifacts from "+strings.Join(cleanedIslands, ", "))
 	}
 
 	// Expansion is the most expensive image operation. Run it on all cores only
