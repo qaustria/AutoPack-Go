@@ -459,7 +459,9 @@ func prepareMeshBinding(textures map[string]cachedTexture, binding meshBinding, 
 		images = append(images, textures[sourceKey].Resized)
 	}
 	union := unionAlpha(images)
-	mesh, _, err := utils.BuildGreedyMesh(union, binding.Config)
+	meshConfig := binding.Config
+	meshConfig.AlphaThreshold = utils.DetectMeshAlphaThreshold(union)
+	mesh, _, err := utils.BuildGreedyMesh(union, meshConfig)
 	if err != nil {
 		return preparedUpload{}, fmt.Errorf("build %s mesh: %w", binding.Name, err)
 	}

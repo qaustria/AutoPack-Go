@@ -11,11 +11,6 @@ const (
 	// the original Python edge-expander values.
 	EdgeExpandedTextureSize  = 512
 	EdgeExpansionMaxDistance = 48
-	// TextureAlphaThreshold removes exporter noise that marks a supposedly
-	// transparent background with alpha values such as 1-4. Those pixels are
-	// visually transparent, but Roblox can render them and the mesh builder can
-	// interpret them as a full rectangular silhouette.
-	TextureAlphaThreshold = 8
 )
 
 // EdgeExpand returns the edge-expanded version used for a Roblox *Texture.
@@ -147,9 +142,6 @@ func resizeNearestNRGBA(img image.Image, width, height int) *image.NRGBA {
 				sourceX = bounds.Max.X - 1
 			}
 			pixel := color.NRGBAModel.Convert(img.At(sourceX, sourceY)).(color.NRGBA)
-			if pixel.A <= TextureAlphaThreshold {
-				pixel = color.NRGBA{}
-			}
 			destination.SetNRGBA(x, y, pixel)
 		}
 	}

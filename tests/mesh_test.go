@@ -96,7 +96,7 @@ func TestAlphaThreshold(t *testing.T) {
 	}
 }
 
-func TestDefaultAlphaThresholdRejectsNoisyFullPlane(t *testing.T) {
+func TestDetectMeshAlphaThresholdRejectsNoisyFullPlane(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
 	for y := 0; y < 16; y++ {
 		for x := 0; x < 16; x++ {
@@ -109,12 +109,27 @@ func TestDefaultAlphaThresholdRejectsNoisyFullPlane(t *testing.T) {
 		}
 	}
 
-	_, stats, err := BuildGreedyMesh(img, DefaultConfig())
+	threshold := DetectMeshAlphaThreshold(img)
+	if threshold != 4 {
+		t.Fatalf("detected alpha threshold = %d, want 4", threshold)
+	}
+	cfg := DefaultConfig()
+	cfg.AlphaThreshold = threshold
+	_, stats, err := BuildGreedyMesh(img, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if stats.OpaqueCells != 12 {
 		t.Fatalf("opaque cells = %d, want only 12 real item pixels", stats.OpaqueCells)
+	}
+}
+
+func TestDetectMeshAlphaThresholdPreservesNormalAntialiasing(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	img.SetNRGBA(7, 7, color.NRGBA{A: 4})
+	img.SetNRGBA(8, 7, color.NRGBA{A: 255})
+	if threshold := DetectMeshAlphaThreshold(img); threshold != 0 {
+		t.Fatalf("normal sprite threshold = %d, want 0", threshold)
 	}
 }
 

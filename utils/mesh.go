@@ -23,12 +23,53 @@ func DefaultConfig() Config {
 	return Config{
 		PlaneSize:      2.0,
 		Thickness:      0.07,
-		AlphaThreshold: TextureAlphaThreshold,
+		AlphaThreshold: 0,
 		RotateX:        90,
 		RotateY:        -45,
 		RotateZ:        0,
 		Center:         true,
 	}
+}
+
+const maxBackgroundNoiseAlpha = 8
+
+// DetectMeshAlphaThreshold detects the specific broken-export pattern where
+// nearly every image pixel has a tiny non-zero alpha value. It is intended for
+// geometry masks only: source texture pixels remain completely unchanged.
+// Normal sprites with genuinely transparent backgrounds return zero.
+func DetectMeshAlphaThreshold(img image.Image) int {
+	if img == nil {
+		return 0
+	}
+	bounds := img.Bounds()
+	total := bounds.Dx() * bounds.Dy()
+	if total <= 0 {
+		return 0
+	}
+	visible := 0
+	lowAlpha := 0
+	threshold := 0
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			_, _, _, alpha16 := img.At(x, y).RGBA()
+			alpha := int(alpha16 >> 8)
+			if alpha > 0 {
+				visible++
+			}
+			if alpha > 0 && alpha <= maxBackgroundNoiseAlpha {
+				lowAlpha++
+				if alpha > threshold {
+					threshold = alpha
+				}
+			}
+		}
+	}
+	// Only activate when the low-alpha pixels look like a canvas-wide export
+	// artifact, not ordinary antialiasing around a normally transparent sprite.
+	if visible*100 < total*90 || lowAlpha*100 < total*10 {
+		return 0
+	}
+	return threshold
 }
 
 func (c Config) Validate() error {
