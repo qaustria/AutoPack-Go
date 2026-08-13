@@ -13,11 +13,18 @@
   <main class="page">
     <section class="workspace" aria-label="Cone texture pack converter">
       <div class="cone-side" aria-hidden="true">
-        <div class="cone-art"><img src="/cone.png" alt=""></div>
+        <div class="cone-art" id="cone-art" data-state="idle">
+          <img id="cone-image" src="/cone.png" alt="">
+        </div>
       </div>
 
       <section class="converter" aria-label="Choose and convert a texture pack">
-        <h1 class="sr-only">Cone</h1>
+        <header class="converter-intro">
+          <div>
+            <p>Cone</p>
+            <h1>Minecraft 1.8.9 <span>to</span> BridgeDuel</h1>
+          </div>
+        </header>
         <form id="convert-form">
           <details class="setup-guide" open>
             <summary>Roblox API setup</summary>
@@ -36,7 +43,10 @@
             </label>
             <label>
               <span>Open Cloud API key</span>
-              <input id="api-key-input" type="password" maxlength="8192" placeholder="Paste API key" autocomplete="off" spellcheck="false" required>
+              <span class="secret-field">
+                <input id="api-key-input" type="password" maxlength="8192" placeholder="Paste API key" autocomplete="off" spellcheck="false" required>
+                <button class="secret-toggle" id="secret-toggle" type="button" aria-label="Show API key" aria-pressed="false">Show</button>
+              </span>
             </label>
           </div>
           <div class="credential-options">
@@ -49,6 +59,7 @@
 
           <label class="drop-zone" id="drop-zone" for="pack-input">
             <input id="pack-input" name="pack" type="file" accept=".zip,application/zip" required>
+            <span class="drop-kicker">Minecraft 1.8.9 · ZIP</span>
             <span class="drop-title">Drop texture pack here</span>
             <span class="drop-copy">or click to choose a ZIP</span>
           </label>
@@ -86,7 +97,10 @@
               <h2>JSON ready</h2>
               <p>Copy this into your game configuration.</p>
             </div>
-            <button class="copy-button" id="copy-button" type="button">Copy JSON</button>
+            <div class="result-actions">
+              <button class="secondary-button" id="port-another-button" type="button">Port another one</button>
+              <button class="copy-button" id="copy-button" type="button">Copy JSON</button>
+            </div>
           </div>
           <pre class="json-output" id="json-output" tabindex="0"></pre>
         </section>

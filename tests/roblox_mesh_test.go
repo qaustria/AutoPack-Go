@@ -8,7 +8,7 @@ import (
 	"math"
 	"testing"
 
-	. "autopack/utils"
+	. "github.com/qaustria/AutoPack-Go/utils"
 )
 
 func TestEncodeRobloxMeshHasNativeVertexAndFaceData(t *testing.T) {

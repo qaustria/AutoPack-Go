@@ -86,6 +86,15 @@ func TestWebHandlerServesFrontendWithSecurityHeaders(t *testing.T) {
 	if !strings.Contains(response.Body.String(), `id="api-key-input"`) || !strings.Contains(response.Body.String(), `id="user-id-input"`) || !strings.Contains(response.Body.String(), "Assets: Read + Write") {
 		t.Fatal("frontend is missing Roblox credential fields or API-key instructions")
 	}
+	if !strings.Contains(response.Body.String(), `id="secret-toggle"`) {
+		t.Fatal("frontend is missing its API-key visibility control")
+	}
+	if !strings.Contains(response.Body.String(), `id="port-another-button"`) {
+		t.Fatal("frontend is missing its post-port reset action")
+	}
+	if !strings.Contains(response.Body.String(), "Minecraft 1.8.9") || !strings.Contains(response.Body.String(), "BridgeDuel") || strings.Contains(response.Body.String(), "Cone texture pack porter") {
+		t.Fatal("frontend branding does not identify Cone and the BridgeDuel conversion")
+	}
 	if !strings.Contains(response.Body.String(), "Leave IP restriction off.") || !strings.Contains(response.Body.String(), `id="remember-credentials"`) {
 		t.Fatal("frontend is missing its IP instruction or browser credential-memory control")
 	}
@@ -104,6 +113,14 @@ func TestWebHandlerServesFrontendWithSecurityHeaders(t *testing.T) {
 	handler.ServeHTTP(iconResponse, iconRequest)
 	if iconResponse.Code != http.StatusOK || !strings.HasPrefix(iconResponse.Header().Get("Content-Type"), "image/png") {
 		t.Fatalf("GET /cone.png = %d %q", iconResponse.Code, iconResponse.Header().Get("Content-Type"))
+	}
+	for _, path := range []string{"/cone_accepted.png", "/cone_error.png"} {
+		stateRequest := httptest.NewRequest(http.MethodGet, path, nil)
+		stateResponse := httptest.NewRecorder()
+		handler.ServeHTTP(stateResponse, stateRequest)
+		if stateResponse.Code != http.StatusOK || !strings.HasPrefix(stateResponse.Header().Get("Content-Type"), "image/png") {
+			t.Fatalf("GET %s = %d %q", path, stateResponse.Code, stateResponse.Header().Get("Content-Type"))
+		}
 	}
 }
 

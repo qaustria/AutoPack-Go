@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"autopack/utils"
+	"github.com/qaustria/AutoPack-Go/utils"
 )
 
 //go:embed web/*

@@ -1,4 +1,4 @@
-module autopack
+module github.com/qaustria/AutoPack-Go
 
 go 1.22
 

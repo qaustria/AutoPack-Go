@@ -24,9 +24,8 @@ func DefaultConfig() Config {
 		PlaneSize: 2.0,
 		Thickness: 0.07,
 		// Match the original mesh generator: alpha values below 10 are
-		// transparent. Some packs (including trauma.zip) fill the entire PNG
-		// canvas with exporter noise at alpha 1-4; accepting every non-zero
-		// value turns that noise into a solid rectangular mesh.
+		// transparent. BuildGreedyMesh can raise this threshold automatically
+		// when a broken exporter fills the canvas with low-alpha noise.
 		AlphaThreshold: 9,
 		RotateX:        90,
 		RotateY:        -45,
@@ -35,7 +34,7 @@ func DefaultConfig() Config {
 	}
 }
 
-const maxBackgroundNoiseAlpha = 8
+const maxBackgroundNoiseAlpha = 32
 
 // DetectBackgroundAlphaNoiseThreshold detects the specific broken-export pattern where
 // nearly every image pixel has a tiny non-zero alpha value. It is intended for
@@ -50,27 +49,32 @@ func DetectBackgroundAlphaNoiseThreshold(img image.Image) int {
 	if total <= 0 {
 		return 0
 	}
-	visible := 0
 	lowAlpha := 0
+	borderLowAlpha := 0
+	borderPixels := 0
 	threshold := 0
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 			_, _, _, alpha16 := img.At(x, y).RGBA()
 			alpha := int(alpha16 >> 8)
-			if alpha > 0 {
-				visible++
-			}
 			if alpha > 0 && alpha <= maxBackgroundNoiseAlpha {
 				lowAlpha++
 				if alpha > threshold {
 					threshold = alpha
 				}
 			}
+			if x == bounds.Min.X || x == bounds.Max.X-1 || y == bounds.Min.Y || y == bounds.Max.Y-1 {
+				borderPixels++
+				if alpha > 0 && alpha <= maxBackgroundNoiseAlpha {
+					borderLowAlpha++
+				}
+			}
 		}
 	}
-	// Only activate when the low-alpha pixels look like a canvas-wide export
-	// artifact, not ordinary antialiasing around a normally transparent sprite.
-	if visible*100 < total*90 || lowAlpha*100 < total*10 {
+	// A broken canvas covers a large part of the image and reaches most of its
+	// outside border. Ordinary antialiasing only hugs the item silhouette and
+	// therefore cannot satisfy both conditions.
+	if threshold == 0 || lowAlpha*100 < total*20 || borderLowAlpha*100 < borderPixels*60 {
 		return 0
 	}
 	return threshold
@@ -128,6 +132,7 @@ type MeshStats struct {
 	GridHeight        int
 	OpaqueCells       int
 	Quads             int
+	AlphaThreshold    int
 	BlenderDimensions [3]float64
 }
 
@@ -161,6 +166,10 @@ func BuildGreedyMesh(img image.Image, cfg Config) (Mesh, MeshStats, error) {
 		return Mesh{}, MeshStats{}, fmt.Errorf("image dimensions %dx%d are too large", width, height)
 	}
 
+	effectiveThreshold := cfg.AlphaThreshold
+	if detected := DetectBackgroundAlphaNoiseThreshold(img); detected > effectiveThreshold {
+		effectiveThreshold = detected
+	}
 	mask := make([]bool, gridWidth*gridHeight)
 	opaque := 0
 	hasPartialAlpha := false
@@ -176,17 +185,17 @@ func BuildGreedyMesh(img image.Image, cfg Config) (Mesh, MeshStats, error) {
 			}
 			_, _, _, a := img.At(px, py).RGBA()
 			alpha := int(a >> 8)
-			if alpha > 0 && alpha < 255 {
+			if alpha > effectiveThreshold && alpha < 255 {
 				hasPartialAlpha = true
 			}
-			if alpha > cfg.AlphaThreshold {
+			if alpha > effectiveThreshold {
 				mask[y*gridWidth+x] = true
 				opaque++
 			}
 		}
 	}
 	if opaque == 0 {
-		return Mesh{}, MeshStats{}, fmt.Errorf("no cells are visible at alpha threshold %d", cfg.AlphaThreshold)
+		return Mesh{}, MeshStats{}, fmt.Errorf("no cells are visible at alpha threshold %d", effectiveThreshold)
 	}
 
 	minX, minY, maxX, maxY := gridWidth, gridHeight, -1, -1
@@ -366,6 +375,7 @@ func BuildGreedyMesh(img image.Image, cfg Config) (Mesh, MeshStats, error) {
 		GridHeight:        gridHeight,
 		OpaqueCells:       opaque,
 		Quads:             len(b.mesh.Indices) / 6,
+		AlphaThreshold:    effectiveThreshold,
 		BlenderDimensions: [3]float64{dimsGLTF.x, dimsGLTF.z, dimsGLTF.y},
 	}
 	return b.mesh, stats, nil

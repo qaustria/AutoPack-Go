@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	. "autopack/utils"
+	. "github.com/qaustria/AutoPack-Go/utils"
 )
 
 func TestUnzipTexturePackFindsWrappedAssetsAndGeneratesPotions(t *testing.T) {

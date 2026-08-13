@@ -9,7 +9,7 @@ import (
 	"image/png"
 	"testing"
 
-	. "autopack/utils"
+	. "github.com/qaustria/AutoPack-Go/utils"
 )
 
 const (

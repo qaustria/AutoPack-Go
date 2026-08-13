@@ -5,3 +5,7 @@
 /.env.go.save
 /*.bak
 /*.log
+/*_cone.json
+/.playwright-cli/
+/output/
+*~

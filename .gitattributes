@@ -1,0 +1,4 @@
+*.glb binary
+*.mesh binary
+*.png binary
+prebuilt/* binary

@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"autopack/utils"
+	"github.com/qaustria/AutoPack-Go/utils"
 )
 
 func main() {

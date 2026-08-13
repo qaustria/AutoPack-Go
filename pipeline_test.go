@@ -17,7 +17,7 @@ import (
 	"strings"
 	"testing"
 
-	"autopack/utils"
+	"github.com/qaustria/AutoPack-Go/utils"
 )
 
 type fakeUploader struct {
@@ -209,6 +209,24 @@ func TestRunPipelineSkipsFailedUploadsAndKeepsDefaults(t *testing.T) {
 	}
 }
 
+func TestRunPipelineRefusesBrokenCoreToolMeshes(t *testing.T) {
+	zipPath := filepath.Join(t.TempDir(), "pack.zip")
+	writeCompletePack(t, zipPath)
+	uploader := &selectiveFailureUploader{failures: map[string]string{
+		"Cone sword mesh": "Roblox rejected sword geometry",
+	}}
+	var logs []string
+	_, err := runPipeline(context.Background(), zipPath, uploader, nil, func(message string) {
+		logs = append(logs, message)
+	})
+	if err == nil || !strings.Contains(err.Error(), "refused to return a broken pack") {
+		t.Fatalf("core mesh failure = %v, want broken-pack rejection", err)
+	}
+	if !strings.Contains(strings.Join(logs, "\n"), "Required Cone sword mesh failed") {
+		t.Fatalf("core mesh failure was not logged clearly:\n%s", strings.Join(logs, "\n"))
+	}
+}
+
 func TestRunPipelineRemovesCanvasWideAlphaNoiseFromUploadArtifacts(t *testing.T) {
 	zipPath := filepath.Join(t.TempDir(), "noisy-pack.zip")
 	files := completePackImages()
@@ -276,11 +294,11 @@ func TestRunPipelineRemovesCanvasWideAlphaNoiseFromUploadArtifacts(t *testing.T)
 	}
 }
 
-func TestPipelineMeshesFaceNorthWithHalfTurnYaw(t *testing.T) {
+func TestPipelineMeshesKeepOriginalOrientationWithAxeHalfTurn(t *testing.T) {
 	bindings := pipelineMeshes()
 	wantZ := map[string]float64{
-		"sword": 180, "pickaxe": 180, "bow_0": 180,
-		"gold_apple": 180, "axe": 360, "shears": 180,
+		"sword": 0, "pickaxe": 0, "bow_0": 0,
+		"gold_apple": 0, "axe": 180, "shears": 0,
 	}
 	for _, binding := range bindings {
 		if expected, exists := wantZ[binding.Name]; exists && binding.Config.RotateZ != expected {
@@ -312,8 +330,8 @@ func TestGoldenAppleMeshHasNoCustomRotationOffset(t *testing.T) {
 		if binding.Name != "gold_apple" {
 			continue
 		}
-		if binding.Config.RotateX != 90 || binding.Config.RotateY != 0 || binding.Config.RotateZ != 180 {
-			t.Fatalf("gold apple mesh rotation = (%v, %v, %v), want unchanged flat config (90, 0, 180)",
+		if binding.Config.RotateX != 90 || binding.Config.RotateY != 0 || binding.Config.RotateZ != 0 {
+			t.Fatalf("gold apple mesh rotation = (%v, %v, %v), want unchanged flat config (90, 0, 0)",
 				binding.Config.RotateX, binding.Config.RotateY, binding.Config.RotateZ)
 		}
 		return
@@ -328,8 +346,8 @@ func TestPotionMeshUsesUprightFlatOrientation(t *testing.T) {
 			continue
 		}
 		found++
-		if binding.Config.RotateX != 90 || binding.Config.RotateY != 0 || binding.Config.RotateZ != 180 {
-			t.Fatalf("%s mesh rotation = (%v, %v, %v), want upright flat config (90, 0, 180)",
+		if binding.Config.RotateX != 90 || binding.Config.RotateY != 0 || binding.Config.RotateZ != 0 {
+			t.Fatalf("%s mesh rotation = (%v, %v, %v), want upright flat config (90, 0, 0)",
 				binding.Name, binding.Config.RotateX, binding.Config.RotateY, binding.Config.RotateZ)
 		}
 	}

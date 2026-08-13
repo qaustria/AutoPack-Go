@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	. "autopack/utils"
+	. "github.com/qaustria/AutoPack-Go/utils"
 	"github.com/robloxapi/rbxfile"
 	"github.com/robloxapi/rbxfile/rbxl"
 )

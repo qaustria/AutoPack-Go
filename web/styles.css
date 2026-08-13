@@ -26,7 +26,9 @@ body {
 
 body {
   margin: 0;
-  background: var(--page);
+  background:
+    radial-gradient(circle at 50% 15%, rgb(255 121 0 / 7%), transparent 34rem),
+    var(--page);
   color: var(--text);
 }
 
@@ -61,8 +63,12 @@ input {
   align-items: center;
   gap: 22px 48px;
   margin-block: auto;
+  border: 1px solid #2e2b28;
+  border-radius: 28px;
   padding: 32px 48px 24px;
   background: var(--panel);
+  box-shadow: 0 28px 72px rgb(0 0 0 / 28%);
+  animation: workspace-in 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 .cone-side {
@@ -79,10 +85,61 @@ input {
   display: block;
   width: 100%;
   height: auto;
+  filter: drop-shadow(0 18px 16px rgb(0 0 0 / 25%));
+  animation: cone-in 650ms cubic-bezier(0.2, 0.9, 0.25, 1.15) 80ms both;
+}
+
+.cone-art[data-state="accepted"] img {
+  filter: drop-shadow(0 18px 16px rgb(0 0 0 / 25%)) drop-shadow(0 0 18px rgb(0 177 45 / 13%));
+}
+
+.cone-art[data-state="error"] img {
+  filter: drop-shadow(0 18px 16px rgb(0 0 0 / 25%)) drop-shadow(0 0 18px rgb(198 42 0 / 14%));
+}
+
+.cone-art.is-changing img {
+  animation: cone-state-in 360ms cubic-bezier(0.18, 0.85, 0.28, 1.2) both;
 }
 
 .converter {
   min-width: 0;
+}
+
+.converter-intro {
+  margin-bottom: 16px;
+}
+
+.converter-intro p,
+.converter-intro h1 {
+  margin: 0;
+}
+
+.converter-intro p {
+  margin-bottom: 2px;
+  color: transparent;
+  background: linear-gradient(105deg, var(--orange) 28%, #ffd0a3 48%, var(--orange) 68%);
+  background-clip: text;
+  background-size: 220% 100%;
+  font-family: "Trebuchet MS", ui-sans-serif, system-ui, sans-serif;
+  font-size: 30px;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  animation: shiny-text 4.2s linear infinite;
+}
+
+.converter-intro h1 {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  line-height: 1.35;
+}
+
+.converter-intro h1 span {
+  margin-inline: 0.28em;
+  color: var(--orange);
+  font-size: 0.88em;
+  font-weight: 800;
 }
 
 #convert-form {
@@ -92,7 +149,14 @@ input {
 .setup-guide {
   margin-bottom: 12px;
   border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
   background: #242424;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.setup-guide:hover {
+  border-color: #5b534b;
 }
 
 .setup-guide summary {
@@ -153,9 +217,10 @@ input {
 
 .credential-fields input {
   min-width: 0;
+  width: 100%;
   height: 44px;
   border: 1px solid var(--line);
-  border-radius: 0;
+  border-radius: 11px;
   outline: 0;
   padding: 0 12px;
   background: #202020;
@@ -166,6 +231,42 @@ input {
 
 .credential-fields input:focus {
   border-color: var(--orange);
+  background: #242321;
+  box-shadow: 0 0 0 3px rgb(255 121 0 / 10%);
+}
+
+.secret-field {
+  position: relative;
+  display: block;
+}
+
+.secret-field input {
+  padding-right: 61px;
+}
+
+.secret-toggle {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  min-width: 48px;
+  border: 0;
+  padding: 7px 8px;
+  transform: translateY(-50%);
+  cursor: pointer;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 760;
+  letter-spacing: 0.03em;
+}
+
+.secret-toggle:hover {
+  color: var(--text);
+}
+
+.secret-toggle:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .credential-options {
@@ -200,22 +301,43 @@ input {
 }
 
 .drop-zone {
+  position: relative;
   display: flex;
   min-height: 230px;
   cursor: pointer;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
   flex-direction: column;
   border: 2px solid var(--orange);
+  border-radius: 22px;
+  overflow: hidden;
   padding: 36px 44px;
-  background: var(--surface);
-  transition: border-color 140ms ease, background 140ms ease;
+  background:
+    radial-gradient(circle 260px at var(--spot-x, 50%) var(--spot-y, 115%), rgb(255 156 68 / 16%), transparent 66%),
+    var(--surface);
+  text-align: center;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+
+.drop-zone > * {
+  position: relative;
+  z-index: 1;
 }
 
 .drop-zone:hover,
 .drop-zone.is-dragging {
   border-color: var(--orange-hover);
   background: var(--surface-hover);
+}
+
+.drop-zone:hover {
+  box-shadow: 0 10px 32px rgb(0 0 0 / 18%), inset 0 0 0 1px rgb(255 255 255 / 3%);
+  transform: translateY(-2px);
+}
+
+.drop-zone.is-dragging {
+  box-shadow: 0 0 0 6px rgb(255 121 0 / 12%);
+  transform: translateY(-3px) scale(1.006);
 }
 
 .drop-zone:focus-within {
@@ -242,6 +364,15 @@ input {
   text-transform: lowercase;
 }
 
+.drop-kicker {
+  margin-bottom: 13px;
+  color: var(--orange);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
 .drop-copy {
   margin-top: 16px;
   color: var(--muted);
@@ -256,7 +387,9 @@ input {
   margin-top: 12px;
   padding: 12px 14px;
   border: 1px solid var(--line);
+  border-radius: 14px;
   background: #242424;
+  animation: item-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 .selected-file[hidden],
@@ -271,6 +404,7 @@ input {
   height: 38px;
   flex: 0 0 auto;
   place-items: center;
+  border-radius: 10px;
   background: #3a2412;
   color: var(--orange);
   font-size: 10px;
@@ -303,6 +437,7 @@ input {
 
 .text-button {
   border: 0;
+  border-radius: 8px;
   padding: 8px;
   cursor: pointer;
   background: transparent;
@@ -311,20 +446,24 @@ input {
 }
 
 .text-button:hover {
+  background: #30302f;
   color: var(--text);
 }
 
 .primary-button,
-.copy-button {
+.copy-button,
+.secondary-button {
   display: inline-flex;
   min-height: 46px;
   align-items: center;
   justify-content: center;
   border: 0;
+  border-radius: 12px;
   background: var(--orange);
   color: #170b00;
   font-weight: 760;
   text-decoration: none;
+  transition: transform 130ms ease, background 150ms ease, box-shadow 150ms ease;
 }
 
 .primary-button {
@@ -336,6 +475,14 @@ input {
 .primary-button:not(:disabled):hover,
 .copy-button:hover {
   background: var(--orange-hover);
+  box-shadow: 0 9px 24px rgb(255 121 0 / 18%);
+  transform: translateY(-2px);
+}
+
+.primary-button:not(:disabled):active,
+.copy-button:active,
+.secondary-button:active {
+  transform: translateY(1px);
 }
 
 .primary-button:disabled {
@@ -348,7 +495,9 @@ input {
   margin-top: 12px;
   padding: 18px;
   border: 1px solid var(--line);
+  border-radius: 16px;
   background: #242424;
+  animation: panel-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 .status-row,
@@ -393,6 +542,7 @@ input {
   height: 4px;
   overflow: hidden;
   margin-top: 15px;
+  border-radius: 999px;
   background: #3a3a3a;
 }
 
@@ -400,6 +550,7 @@ input {
   display: block;
   width: 0;
   height: 100%;
+  border-radius: inherit;
   background: var(--orange);
   transition: width 180ms ease;
 }
@@ -412,6 +563,7 @@ input {
   overflow-y: auto;
   margin-top: 14px;
   padding: 11px 12px;
+  border-radius: 11px;
   background: #191919;
   color: #c7c3bc;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -423,6 +575,7 @@ input {
 .activity-log p {
   margin: 0;
   overflow-wrap: anywhere;
+  animation: log-in 180ms ease both;
 }
 
 .activity-log p::before {
@@ -448,12 +601,35 @@ input {
   font-size: 12px;
 }
 
+.result-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.secondary-button {
+  min-height: 46px;
+  border: 1px solid #55504a;
+  padding-inline: 15px;
+  cursor: pointer;
+  background: #2d2b29;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.secondary-button:hover {
+  border-color: var(--orange);
+  background: #35312d;
+  transform: translateY(-2px);
+}
+
 .json-output {
   max-height: 280px;
   overflow: auto;
   margin: 16px 0 0;
   padding: 14px;
   border: 1px solid #3b3b3b;
+  border-radius: 11px;
   background: #181818;
   color: #ddd8d0;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -487,6 +663,96 @@ input {
   color: var(--orange-hover);
 }
 
+.click-spark {
+  position: fixed;
+  z-index: 1000;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.click-spark-ray {
+  position: absolute;
+  top: -1px;
+  left: 0;
+  width: 9px;
+  height: 2px;
+  border-radius: 999px;
+  transform: rotate(var(--spark-angle)) translateX(4px);
+  transform-origin: left center;
+  background: var(--orange);
+  box-shadow: 0 0 7px rgb(255 121 0 / 55%);
+  animation: click-spark 440ms cubic-bezier(0.15, 0.75, 0.25, 1) forwards;
+}
+
+@keyframes workspace-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.99);
+  }
+}
+
+@keyframes cone-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) rotate(-2deg) scale(0.94);
+  }
+}
+
+@keyframes cone-state-in {
+  from {
+    opacity: 0.45;
+    transform: translateY(8px) scale(0.96);
+  }
+}
+
+@keyframes item-in {
+  from {
+    opacity: 0;
+    transform: translateY(-5px) scale(0.985);
+  }
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@keyframes log-in {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+}
+
+@keyframes shiny-text {
+  to {
+    background-position: -220% 0;
+  }
+}
+
+@keyframes click-spark {
+  65% {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+    transform: rotate(var(--spark-angle)) translateX(30px) scaleX(0.25);
+  }
+}
+
+a:focus-visible,
+button:focus-visible,
+summary:focus-visible,
+input:focus-visible,
+.drop-zone:has(input:focus-visible) {
+  outline: 2px solid var(--orange);
+  outline-offset: 3px;
+}
+
 @media (max-width: 820px) {
   .page {
     padding: 0;
@@ -500,7 +766,10 @@ input {
     align-items: start;
     gap: 18px;
     margin: 0;
+    border: 0;
+    border-radius: 0;
     padding: 22px 18px 18px;
+    box-shadow: none;
   }
 
   .cone-art {
@@ -510,6 +779,10 @@ input {
   .converter {
     width: min(500px, 100%);
     justify-self: center;
+  }
+
+  .converter-intro {
+    text-align: center;
   }
 
   .drop-zone {
@@ -543,6 +816,10 @@ input {
   .drop-copy {
     margin-top: 11px;
     font-size: 12px;
+  }
+
+  .drop-kicker {
+    margin-bottom: 10px;
   }
 
   .selected-file {
@@ -588,7 +865,12 @@ input {
     flex-direction: column;
   }
 
-  .copy-button {
+  .result-actions {
+    width: 100%;
+  }
+
+  .copy-button,
+  .secondary-button {
     width: 100%;
   }
 }
@@ -611,6 +893,10 @@ input {
 
   .setup-guide summary {
     padding-block: 10px;
+  }
+
+  .converter-intro {
+    margin-bottom: 10px;
   }
 
   .setup-guide li + li {
@@ -640,5 +926,7 @@ input {
   *::before,
   *::after {
     transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }

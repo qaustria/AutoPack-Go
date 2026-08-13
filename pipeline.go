@@ -15,7 +15,7 @@ import (
 	"strings"
 	"sync"
 
-	"autopack/utils"
+	"github.com/qaustria/AutoPack-Go/utils"
 )
 
 // UploadBatcher is the upload boundary used by the processing pipeline.
@@ -56,6 +56,7 @@ type meshBinding struct {
 type preparedUpload struct {
 	Request    utils.UploadRequest
 	JSONFields []string
+	Required   bool
 }
 
 type cachedTexture struct {
@@ -139,14 +140,10 @@ var pipelineTextures = []textureBinding{
 
 func pipelineMeshes() []meshBinding {
 	standard := utils.DefaultConfig()
-	// The target game treats the opposite horizontal direction as north.
-	// Blender Z maps to Roblox Y, so adding 180 degrees here flips every item
-	// around Roblox's vertical axis without changing its size or handedness.
-	standard.RotateZ += 180
 	flat := standard
 	flat.RotateY = 0
-	// Keep the sword tilt, then yaw the axe by another half turn. This changes
-	// which direction its head faces without rolling it upside down.
+	// Axes need the opposite horizontal direction from swords and pickaxes.
+	// Keep the original sword tilt and apply only this item-specific half turn.
 	axe := standard
 	axe.RotateZ += 180
 	return []meshBinding{
@@ -226,6 +223,7 @@ func runPipeline(ctx context.Context, zipPath string, uploader UploadBatcher, pr
 	}
 	accepted := 0
 	skipped := 0
+	var requiredFailures []string
 	for index, result := range results {
 		var resultErr error
 		if result.Error != "" {
@@ -240,12 +238,17 @@ func runPipeline(ctx context.Context, zipPath string, uploader UploadBatcher, pr
 		}
 		if resultErr != nil {
 			skipped++
-			logPipeline(log, fmt.Sprintf(
-				"Skipped %s; using default for %s. Roblox error: %s",
-				prepared[index].Request.DisplayName,
-				strings.Join(prepared[index].JSONFields, ", "),
-				resultErr,
-			))
+			if prepared[index].Required {
+				requiredFailures = append(requiredFailures, fmt.Sprintf("%s: %s", prepared[index].Request.DisplayName, resultErr))
+				logPipeline(log, fmt.Sprintf("Required %s failed. Roblox error: %s", prepared[index].Request.DisplayName, resultErr))
+			} else {
+				logPipeline(log, fmt.Sprintf(
+					"Skipped %s; using default for %s. Roblox error: %s",
+					prepared[index].Request.DisplayName,
+					strings.Join(prepared[index].JSONFields, ", "),
+					resultErr,
+				))
+			}
 		}
 		if progress != nil && !streamed {
 			progress(index+1, len(results), prepared[index].Request.DisplayName, resultErr)
@@ -253,6 +256,10 @@ func runPipeline(ctx context.Context, zipPath string, uploader UploadBatcher, pr
 	}
 	if err := ctx.Err(); err != nil {
 		return PipelineResult{}, err
+	}
+	if len(requiredFailures) != 0 {
+		logPipeline(log, fmt.Sprintf("Roblox accepted %d assets, but %d required tool meshes failed", accepted, len(requiredFailures)))
+		return PipelineResult{}, fmt.Errorf("required generated mesh upload failed; Cone refused to return a broken pack: %s", strings.Join(requiredFailures, "; "))
 	}
 	if skipped == 0 {
 		logPipeline(log, fmt.Sprintf("Roblox accepted all %d assets and applied permissions", accepted))
@@ -470,7 +477,7 @@ func prepareMeshBinding(textures map[string]cachedTexture, binding meshBinding, 
 	for _, sourceKey := range binding.SourceKeys {
 		images = append(images, textures[sourceKey].Resized)
 	}
-	union := unionAlpha(images)
+	union := unionAlpha(images, binding.Config.AlphaThreshold)
 	mesh, _, err := utils.BuildGreedyMesh(union, binding.Config)
 	if err != nil {
 		return preparedUpload{}, fmt.Errorf("build %s mesh: %w", binding.Name, err)
@@ -493,15 +500,19 @@ func prepareMeshBinding(textures map[string]cachedTexture, binding meshBinding, 
 			AssetType: utils.AssetTypeModel, ResolveMeshID: true,
 		},
 		JSONFields: binding.JSONFields,
+		Required:   binding.Name == "sword" || binding.Name == "pickaxe" || binding.Name == "axe",
 	}, nil
 }
 
-func unionAlpha(images []image.Image) *image.NRGBA {
+func unionAlpha(images []image.Image, alphaThreshold int) *image.NRGBA {
 	result := image.NewNRGBA(image.Rect(0, 0, utils.EdgeExpandedTextureSize, utils.EdgeExpandedTextureSize))
 	for _, img := range images {
 		for y := 0; y < result.Bounds().Dy(); y++ {
 			for x := 0; x < result.Bounds().Dx(); x++ {
 				pixel := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
+				if int(pixel.A) <= alphaThreshold {
+					continue
+				}
 				offset := result.PixOffset(x, y)
 				if pixel.A <= result.Pix[offset+3] {
 					continue
@@ -509,7 +520,9 @@ func unionAlpha(images []image.Image) *image.NRGBA {
 				result.Pix[offset] = 255
 				result.Pix[offset+1] = 255
 				result.Pix[offset+2] = 255
-				result.Pix[offset+3] = pixel.A
+				// The union is a geometry mask, not a texture. Keep it binary so
+				// excluded background alpha can never leak into GLB geometry.
+				result.Pix[offset+3] = 255
 			}
 		}
 	}

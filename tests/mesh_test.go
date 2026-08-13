@@ -6,7 +6,7 @@ import (
 	"math"
 	"testing"
 
-	. "autopack/utils"
+	. "github.com/qaustria/AutoPack-Go/utils"
 )
 
 func TestFullGridGreedyMeshAndBlenderDimensions(t *testing.T) {
@@ -152,6 +152,31 @@ func TestDetectBackgroundAlphaNoiseThresholdRejectsNoisyFullPlane(t *testing.T) 
 	}
 	if stats.OpaqueCells != 12 {
 		t.Fatalf("opaque cells = %d, want only 12 real item pixels", stats.OpaqueCells)
+	}
+}
+
+func TestGreedyMeshAutomaticallyRejectsHigherCanvasAlphaNoise(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 64, 64))
+	for y := 0; y < 64; y++ {
+		for x := 0; x < 64; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 245, G: 245, B: 245, A: 24})
+		}
+	}
+	for y := 8; y < 56; y++ {
+		for x := 29; x < 35; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 80, G: 30, B: 15, A: 255})
+		}
+	}
+
+	_, stats, err := BuildGreedyMesh(img, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.AlphaThreshold != 24 {
+		t.Fatalf("effective alpha threshold = %d, want detected canvas alpha 24", stats.AlphaThreshold)
+	}
+	if stats.OpaqueCells != 6*48 {
+		t.Fatalf("opaque cells = %d, want only %d item cells", stats.OpaqueCells, 6*48)
 	}
 }
 

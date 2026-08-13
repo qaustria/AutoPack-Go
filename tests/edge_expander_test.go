@@ -6,7 +6,7 @@ import (
 	"math"
 	"testing"
 
-	. "autopack/utils"
+	. "github.com/qaustria/AutoPack-Go/utils"
 )
 
 func TestEdgeExpandUsesExactSizeDistanceAndFalloff(t *testing.T) {

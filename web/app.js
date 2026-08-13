@@ -1,8 +1,12 @@
 const form = document.querySelector("#convert-form");
 const setupGuide = document.querySelector("#convert-form .setup-guide");
+const setupSummary = setupGuide.querySelector("summary");
+const coneArt = document.querySelector("#cone-art");
+const coneImage = document.querySelector("#cone-image");
 const input = document.querySelector("#pack-input");
 const apiKeyInput = document.querySelector("#api-key-input");
 const userIDInput = document.querySelector("#user-id-input");
+const secretToggle = document.querySelector("#secret-toggle");
 const rememberCredentials = document.querySelector("#remember-credentials");
 const dropZone = document.querySelector("#drop-zone");
 const selectedFile = document.querySelector("#selected-file");
@@ -21,9 +25,23 @@ const activityLog = document.querySelector("#activity-log");
 const resultPanel = document.querySelector("#result-panel");
 const jsonOutput = document.querySelector("#json-output");
 const copyButton = document.querySelector("#copy-button");
+const portAnotherButton = document.querySelector("#port-another-button");
 
 let currentFile = null;
 let resultJSON = "";
+let audioContext = null;
+let playedCompleteSound = false;
+
+const coneImages = {
+  idle: "/cone.png",
+  accepted: "/cone_accepted.png",
+  error: "/cone_error.png",
+};
+
+for (const source of Object.values(coneImages)) {
+  const image = new Image();
+  image.src = source;
+}
 
 const storageKeys = {
   remember: "cone.rememberCredentials",
@@ -31,16 +49,80 @@ const storageKeys = {
   userID: "cone.robloxUserId",
 };
 
+function tone(frequency, start, duration, volume = 0.025, type = "sine") {
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(frequency, start);
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(volume, start + 0.012);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+  oscillator.connect(gain);
+  gain.connect(audioContext.destination);
+  oscillator.start(start);
+  oscillator.stop(start + duration + 0.02);
+}
+
+function playSound(name) {
+  try {
+    audioContext ||= new AudioContext();
+    if (audioContext.state === "suspended") audioContext.resume();
+    const now = audioContext.currentTime + 0.01;
+    const sounds = {
+      tap: [[510, 0, 0.045]],
+      select: [[440, 0, 0.06], [660, 0.055, 0.08]],
+      start: [[300, 0, 0.07], [420, 0.07, 0.08]],
+      complete: [[523, 0, 0.08], [659, 0.07, 0.08], [784, 0.14, 0.13]],
+      error: [[210, 0, 0.1], [150, 0.09, 0.14]],
+      copy: [[720, 0, 0.07]],
+    };
+    for (const [frequency, delay, duration] of sounds[name] || []) {
+      tone(frequency, now + delay, duration, name === "error" ? 0.018 : 0.022, "triangle");
+    }
+  } catch {
+    // Sound is optional; conversion must work when Web Audio is unavailable.
+  }
+}
+
+function setConeState(state) {
+  const source = coneImages[state] || coneImages.idle;
+  if (coneArt.dataset.state === state && coneImage.getAttribute("src") === source) return;
+  coneArt.dataset.state = state;
+  coneImage.src = source;
+  coneArt.classList.remove("is-changing");
+  void coneArt.offsetWidth;
+  coneArt.classList.add("is-changing");
+}
+
+function createClickSpark(event) {
+  if (event.button !== 0 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const spark = document.createElement("span");
+  spark.className = "click-spark";
+  spark.style.left = `${event.clientX}px`;
+  spark.style.top = `${event.clientY}px`;
+  for (let index = 0; index < 8; index += 1) {
+    const ray = document.createElement("span");
+    ray.className = "click-spark-ray";
+    ray.style.setProperty("--spark-angle", `${index * 45}deg`);
+    spark.append(ray);
+  }
+  document.body.append(spark);
+  window.setTimeout(() => spark.remove(), 480);
+}
+
 function readSavedCredentials() {
   try {
     if (localStorage.getItem(storageKeys.remember) === "false") {
       rememberCredentials.checked = false;
+      if (window.matchMedia("(max-width: 480px)").matches) setupGuide.open = false;
       return;
     }
     rememberCredentials.checked = true;
     apiKeyInput.value = localStorage.getItem(storageKeys.apiKey) || "";
     userIDInput.value = localStorage.getItem(storageKeys.userID) || "";
-    if (apiKeyInput.value && userIDInput.value) setupGuide.open = false;
+    if ((apiKeyInput.value && userIDInput.value) || window.matchMedia("(max-width: 480px)").matches) {
+      setupGuide.open = false;
+    }
   } catch {
     rememberCredentials.checked = false;
   }
@@ -79,6 +161,7 @@ function setFile(file) {
     currentFile = null;
     input.value = "";
     selectedFile.hidden = true;
+    resetOutput();
     updateConvertState();
     return;
   }
@@ -92,6 +175,7 @@ function setFile(file) {
   selectedFile.hidden = false;
   updateConvertState();
   resetOutput();
+  playSound("select");
 }
 
 function updateConvertState() {
@@ -104,8 +188,10 @@ function resetOutput() {
   statusError.hidden = true;
   activityLog.replaceChildren();
   resultJSON = "";
+  playedCompleteSound = false;
   jsonOutput.textContent = "";
   copyButton.textContent = "Copy JSON";
+  setConeState("idle");
 }
 
 function appendLog(message, isError = false) {
@@ -135,6 +221,8 @@ function showError(message) {
   statusError.textContent = message;
   statusError.hidden = true;
   appendLog(message, true);
+  setConeState("error");
+  playSound("error");
 }
 
 function handleProgress(progress) {
@@ -159,6 +247,10 @@ function handleProgress(progress) {
   if (progress.stage === "complete") {
     updateProgress(100, "Ported", message);
     appendLog(message);
+    if (!playedCompleteSound) {
+      playedCompleteSound = true;
+      playSound("complete");
+    }
     return;
   }
   if (progress.stage === "notifying") {
@@ -171,6 +263,13 @@ function handleResult(event) {
   resultJSON = JSON.stringify(event.result);
   jsonOutput.textContent = resultJSON;
   resultPanel.hidden = false;
+  setConeState("accepted");
+}
+
+function portAnotherPack() {
+  playSound("tap");
+  setFile(null);
+  dropZone.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 async function copyJSON() {
@@ -187,6 +286,7 @@ async function copyJSON() {
     selection.removeAllRanges();
   }
   copyButton.textContent = "Copied";
+  playSound("copy");
   window.setTimeout(() => {
     copyButton.textContent = "Copy JSON";
   }, 1600);
@@ -225,8 +325,22 @@ async function consumeEvents(response) {
 }
 
 input.addEventListener("change", () => setFile(input.files[0]));
-removeFile.addEventListener("click", () => setFile(null));
+removeFile.addEventListener("click", () => {
+  playSound("tap");
+  setFile(null);
+});
 copyButton.addEventListener("click", copyJSON);
+portAnotherButton.addEventListener("click", portAnotherPack);
+secretToggle.addEventListener("click", () => {
+  playSound("tap");
+  const showing = apiKeyInput.type === "text";
+  apiKeyInput.type = showing ? "password" : "text";
+  secretToggle.textContent = showing ? "Show" : "Hide";
+  secretToggle.setAttribute("aria-label", showing ? "Show API key" : "Hide API key");
+  secretToggle.setAttribute("aria-pressed", String(!showing));
+  apiKeyInput.focus({ preventScroll: true });
+});
+setupSummary.addEventListener("click", () => playSound("tap"));
 apiKeyInput.addEventListener("input", () => {
   saveCredentials();
   updateConvertState();
@@ -253,6 +367,16 @@ for (const eventName of ["dragleave", "drop"]) {
   });
 }
 dropZone.addEventListener("drop", (event) => setFile(event.dataTransfer.files[0]));
+dropZone.addEventListener("pointermove", (event) => {
+  const bounds = dropZone.getBoundingClientRect();
+  dropZone.style.setProperty("--spot-x", `${event.clientX - bounds.left}px`);
+  dropZone.style.setProperty("--spot-y", `${event.clientY - bounds.top}px`);
+});
+dropZone.addEventListener("pointerleave", () => {
+  dropZone.style.removeProperty("--spot-x");
+  dropZone.style.removeProperty("--spot-y");
+});
+document.addEventListener("pointerdown", createClickSpark);
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -263,6 +387,9 @@ form.addEventListener("submit", async (event) => {
   removeFile.disabled = true;
   apiKeyInput.disabled = true;
   userIDInput.disabled = true;
+  secretToggle.disabled = true;
+  convertButton.textContent = "Porting...";
+  playSound("start");
   updateProgress(1, "Porting...", `Sending ${currentFile.name}`);
   appendLog(`Sending ${currentFile.name}`);
   const body = new FormData();
@@ -283,6 +410,8 @@ form.addEventListener("submit", async (event) => {
     removeFile.disabled = false;
     apiKeyInput.disabled = false;
     userIDInput.disabled = false;
+    secretToggle.disabled = false;
+    convertButton.textContent = "Port pack";
     updateConvertState();
   }
 });

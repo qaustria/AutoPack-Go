@@ -41,13 +41,13 @@ while [ "$i" -lt 20 ]; do
     if health=$(curl -fsS http://127.0.0.1:8080/healthz 2>/dev/null); then
         printf '%s\n' "$health"
         case "$health" in
-            *'"version":"1.4.1"'*) exit 0 ;;
+            *'"version":"1.4.3"'*) exit 0 ;;
         esac
     fi
     i=$((i + 1))
     sleep 1
 done
 
-echo "Cone started, but healthz did not report version 1.4.1." >&2
+echo "Cone started, but healthz did not report version 1.4.3." >&2
 journalctl -u cone -n 30 --no-pager >&2 || true
 exit 1
