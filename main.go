@@ -111,7 +111,7 @@ func runCLI(ctx context.Context, args []string) error {
 			}
 		case ProgressUploading:
 			if event.Error != "" {
-				fmt.Printf("[%d/%d] FAILED %s: %s\n", event.Completed, event.Total, event.Name, event.Error)
+				fmt.Printf("[%d/%d] SKIPPED %s (using default): %s\n", event.Completed, event.Total, event.Name, event.Error)
 				return
 			}
 			fmt.Printf("[%d/%d] %s\n", event.Completed, event.Total, event.Message)

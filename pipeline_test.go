@@ -34,6 +34,25 @@ func (u *fakeUploader) UploadMany(_ context.Context, requests []utils.UploadRequ
 	return results
 }
 
+type selectiveFailureUploader struct {
+	requests []utils.UploadRequest
+	failures map[string]string
+}
+
+func (u *selectiveFailureUploader) UploadMany(_ context.Context, requests []utils.UploadRequest) []utils.UploadResult {
+	u.requests = append([]utils.UploadRequest(nil), requests...)
+	results := make([]utils.UploadResult, len(requests))
+	for index, request := range requests {
+		results[index].Request = request
+		if message, failed := u.failures[request.DisplayName]; failed {
+			results[index].Error = message
+			continue
+		}
+		results[index].Asset = &utils.UploadedAsset{AssetID: fmt.Sprintf("uploaded-%d", index)}
+	}
+	return results
+}
+
 func TestRunPipelineBuildsSchemaAndDeduplicatesSharedMeshes(t *testing.T) {
 	zipPath := filepath.Join(t.TempDir(), "pack.zip")
 	writeCompletePack(t, zipPath)
@@ -125,6 +144,46 @@ func TestRunPipelineBuildsSchemaAndDeduplicatesSharedMeshes(t *testing.T) {
 	for _, request := range uploader.requests {
 		if _, err := os.Stat(request.FilePath); !os.IsNotExist(err) {
 			t.Fatalf("temporary upload still exists: %s (%v)", request.FilePath, err)
+		}
+	}
+}
+
+func TestRunPipelineSkipsFailedUploadsAndKeepsDefaults(t *testing.T) {
+	zipPath := filepath.Join(t.TempDir(), "pack.zip")
+	writeCompletePack(t, zipPath)
+	uploader := &selectiveFailureUploader{failures: map[string]string{
+		"Cone shears mesh":   "Roblox returned 500 for shears",
+		"Cone bow_1 mesh":    "Roblox returned 429 for bow 1",
+		"Cone bow_2 mesh":    "Roblox returned 429 for bow 2",
+		"Cone fireball mesh": "Roblox returned 400 for fireball",
+	}}
+	defaults, err := defaultPipelineValues()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs []string
+	output, err := runPipeline(context.Background(), zipPath, uploader, nil, func(message string) {
+		logs = append(logs, message)
+	})
+	if err != nil {
+		t.Fatalf("pipeline treated independent upload failures as fatal: %v", err)
+	}
+	for _, field := range []string{"ShearsMesh", "Bow1Mesh", "Bow2Mesh", "FireballMesh"} {
+		if !reflect.DeepEqual(output.Values[field], defaults[field]) {
+			t.Fatalf("%s = %#v, want retained default %#v", field, output.Values[field], defaults[field])
+		}
+	}
+	if reflect.DeepEqual(output.Values["SwordMesh"], defaults["SwordMesh"]) {
+		t.Fatal("successful SwordMesh upload did not replace the default")
+	}
+	logText := strings.Join(logs, "\n")
+	for _, expected := range []string{
+		"Skipped Cone shears mesh; using default for ShearsMesh. Roblox error: Roblox returned 500 for shears",
+		"Skipped Cone bow_1 mesh; using default for Bow1Mesh. Roblox error: Roblox returned 429 for bow 1",
+		"Roblox accepted 67 assets; skipped 4 and kept their default asset IDs",
+	} {
+		if !strings.Contains(logText, expected) {
+			t.Fatalf("pipeline log does not contain %q:\n%s", expected, logText)
 		}
 	}
 }

@@ -121,7 +121,7 @@ func (p *Processor) ProcessPath(ctx context.Context, zipPath string, progress Pr
 		}
 		if uploadErr != nil {
 			event.Error = uploadErr.Error()
-			event.Message = fmt.Sprintf("Failed %s", name)
+			event.Message = fmt.Sprintf("Skipped %s; using default asset", name)
 		}
 		emitProgress(progress, event)
 	}, func(message string) {

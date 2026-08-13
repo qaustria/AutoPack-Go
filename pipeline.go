@@ -222,28 +222,44 @@ func runPipeline(ctx context.Context, zipPath string, uploader UploadBatcher, pr
 	if err != nil {
 		return PipelineResult{}, err
 	}
-	var failures []string
+	accepted := 0
+	skipped := 0
 	for index, result := range results {
 		var resultErr error
 		if result.Error != "" {
 			resultErr = errors.New(result.Error)
-			failures = append(failures, fmt.Sprintf("%s: %s", prepared[index].Request.DisplayName, result.Error))
 		} else if result.Asset == nil || result.Asset.AssetID == "" {
 			resultErr = errors.New("upload returned no asset ID")
-			failures = append(failures, fmt.Sprintf("%s: upload returned no asset ID", prepared[index].Request.DisplayName))
 		} else {
+			accepted++
 			for _, field := range prepared[index].JSONFields {
 				values[field] = result.Asset.AssetID
 			}
+		}
+		if resultErr != nil {
+			skipped++
+			logPipeline(log, fmt.Sprintf(
+				"Skipped %s; using default for %s. Roblox error: %s",
+				prepared[index].Request.DisplayName,
+				strings.Join(prepared[index].JSONFields, ", "),
+				resultErr,
+			))
 		}
 		if progress != nil && !streamed {
 			progress(index+1, len(results), prepared[index].Request.DisplayName, resultErr)
 		}
 	}
-	if len(failures) != 0 {
-		return PipelineResult{}, fmt.Errorf("%d uploads failed:\n  %s", len(failures), strings.Join(failures, "\n  "))
+	if err := ctx.Err(); err != nil {
+		return PipelineResult{}, err
 	}
-	logPipeline(log, fmt.Sprintf("Roblox accepted %d assets and applied permissions", len(results)))
+	if skipped == 0 {
+		logPipeline(log, fmt.Sprintf("Roblox accepted all %d assets and applied permissions", accepted))
+	} else {
+		logPipeline(log, fmt.Sprintf(
+			"Roblox accepted %d assets; skipped %d and kept their default asset IDs",
+			accepted, skipped,
+		))
+	}
 	return PipelineResult{Values: values, PreviewPNG: previewPNG}, nil
 }
 

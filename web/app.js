@@ -153,7 +153,7 @@ function handleProgress(progress) {
   if (progress.stage === "uploading") {
     const ratio = progress.total ? progress.completed / progress.total : 0;
     updateProgress(12 + ratio * 83, "Porting...", message);
-    appendLog(message, Boolean(progress.error));
+    appendLog(progress.error ? `${message}: ${progress.error}` : message, Boolean(progress.error));
     return;
   }
   if (progress.stage === "complete") {
