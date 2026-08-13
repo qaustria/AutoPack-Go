@@ -6,9 +6,9 @@
   <meta name="theme-color" content="#1d1d1d">
   <meta name="description" content="Convert Minecraft 1.8.9 texture packs into Roblox assets.">
   <title>Cone</title>
-  <link rel="icon" href="/cone.png?v=146" type="image/png">
-  <link rel="preload" href="/fonts/inter-var.woff2?v=146" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="/styles.css?v=146">
+  <link rel="icon" href="/cone.png?v=148" type="image/png">
+  <link rel="preload" href="/fonts/inter-var.woff2?v=148" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/styles.css?v=148">
 </head>
 <body>
   <main class="page">
@@ -92,24 +92,26 @@
           <p class="status-error" id="status-error" hidden></p>
         </section>
 
-        <section class="result-panel" id="result-panel" aria-live="polite" hidden>
-          <div class="result-heading">
-            <div>
-              <h2>JSON ready</h2>
-              <p>Copy this into your game configuration.</p>
-            </div>
-            <div class="result-actions">
-              <button class="secondary-button" id="port-another-button" type="button">Port another one</button>
-              <button class="copy-button" id="copy-button" type="button">Copy JSON</button>
-            </div>
-          </div>
-          <pre class="json-output" id="json-output" tabindex="0"></pre>
-        </section>
       </section>
 
       <p class="open-source-note">Cone is fully open-source. <a class="github-link" href="https://github.com/qaustria/AutoPack-Go" target="_blank" rel="noreferrer">GitHub</a></p>
     </section>
   </main>
-  <script src="/app.js?v=146" defer></script>
+  <div class="result-modal" id="result-modal" role="dialog" aria-modal="true" aria-labelledby="result-title" hidden>
+    <button class="result-backdrop" id="result-backdrop" type="button" aria-label="Close JSON result"></button>
+    <section class="result-card" aria-live="polite">
+      <div class="result-mark" aria-hidden="true">✓</div>
+      <div>
+        <p class="result-kicker">Port complete</p>
+        <h2 id="result-title">JSON ready</h2>
+        <p class="result-copy">Copy this into your game configuration.</p>
+      </div>
+      <div class="result-actions">
+        <button class="secondary-button" id="close-result-button" type="button">Close</button>
+        <button class="copy-button" id="copy-button" type="button">Copy JSON</button>
+      </div>
+    </section>
+  </div>
+  <script src="/app.js?v=148" defer></script>
 </body>
 </html>

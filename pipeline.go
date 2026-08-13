@@ -139,6 +139,12 @@ var pipelineTextures = []textureBinding{
 	{SourceKey: "wool_yellow", TextureFields: []string{"ClayYellow"}},
 }
 
+var optionalPipelineTextures = map[string]struct{}{
+	"emerald":  {},
+	"fireball": {},
+	"shears":   {},
+}
+
 func pipelineMeshes() []meshBinding {
 	standard := utils.DefaultConfig()
 	flat := standard
@@ -193,6 +199,9 @@ func runPipeline(ctx context.Context, zipPath string, uploader UploadBatcher, pr
 	defer pack.Cleanup()
 	if missing := requiredMissingTextures(pack.Textures); len(missing) != 0 {
 		return PipelineResult{}, fmt.Errorf("texture pack is missing required textures: %s", strings.Join(missing, ", "))
+	}
+	if missing := missingOptionalTextures(pack.Textures); len(missing) != 0 {
+		logPipeline(log, "Using default assets for missing optional textures: "+strings.Join(missing, ", "))
 	}
 	logPipeline(log, fmt.Sprintf("Found %d mapped textures", len(pack.Textures)))
 	previewPNG, err := buildHotbarPreview(pack.Textures)
@@ -311,15 +320,32 @@ func logPipeline(log PipelineLog, message string) {
 func requiredMissingTextures(textures map[string]string) []string {
 	required := make(map[string]struct{})
 	for _, binding := range pipelineTextures {
+		if _, optional := optionalPipelineTextures[binding.SourceKey]; optional {
+			continue
+		}
 		required[binding.SourceKey] = struct{}{}
 	}
 	for _, binding := range pipelineMeshes() {
 		for _, sourceKey := range binding.SourceKeys {
+			if _, optional := optionalPipelineTextures[sourceKey]; optional {
+				continue
+			}
 			required[sourceKey] = struct{}{}
 		}
 	}
 	var missing []string
 	for key := range required {
+		if textures[key] == "" {
+			missing = append(missing, key)
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+func missingOptionalTextures(textures map[string]string) []string {
+	missing := make([]string, 0, len(optionalPipelineTextures))
+	for key := range optionalPipelineTextures {
 		if textures[key] == "" {
 			missing = append(missing, key)
 		}
@@ -340,6 +366,9 @@ func preparePipelineAssets(ctx context.Context, textures map[string]string, work
 	jobs := make([]assetJob, 0, len(pipelineTextures)*2+len(pipelineMeshes()))
 	for _, binding := range pipelineTextures {
 		binding := binding
+		if textures[binding.SourceKey] == "" {
+			continue
+		}
 		if len(binding.TextureFields) != 0 {
 			jobs = append(jobs, func() (preparedUpload, error) {
 				return prepareTextureUpload(cache[binding.SourceKey].Expanded, binding, false, workDir)
@@ -353,12 +382,31 @@ func preparePipelineAssets(ctx context.Context, textures map[string]string, work
 	}
 	for _, binding := range pipelineMeshes() {
 		binding := binding
+		available := false
+		for _, sourceKey := range binding.SourceKeys {
+			if textures[sourceKey] != "" {
+				available = true
+				break
+			}
+		}
+		if !available {
+			continue
+		}
 		jobs = append(jobs, func() (preparedUpload, error) {
 			return prepareMeshBinding(cache, binding, workDir)
 		})
 	}
-	imageCount := len(jobs) - len(pipelineMeshes())
-	logPipeline(log, fmt.Sprintf("Encoding %d images and %d greedy meshes", imageCount, len(pipelineMeshes())))
+	meshCount := 0
+	for _, binding := range pipelineMeshes() {
+		for _, sourceKey := range binding.SourceKeys {
+			if textures[sourceKey] != "" {
+				meshCount++
+				break
+			}
+		}
+	}
+	imageCount := len(jobs) - meshCount
+	logPipeline(log, fmt.Sprintf("Encoding %d images and %d greedy meshes", imageCount, meshCount))
 
 	prepared := make([]preparedUpload, len(jobs))
 	err = parallelFor(ctx, len(jobs), preparationConcurrency(), func(index int) error {
@@ -378,10 +426,16 @@ func preparePipelineAssets(ctx context.Context, textures map[string]string, work
 func cachePipelineTextures(ctx context.Context, textures map[string]string, log PipelineLog) (map[string]cachedTexture, error) {
 	required := make(map[string]bool)
 	for _, binding := range pipelineTextures {
+		if textures[binding.SourceKey] == "" {
+			continue
+		}
 		required[binding.SourceKey] = len(binding.TextureFields) != 0
 	}
 	for _, binding := range pipelineMeshes() {
 		for _, sourceKey := range binding.SourceKeys {
+			if textures[sourceKey] == "" {
+				continue
+			}
 			if _, exists := required[sourceKey]; !exists {
 				required[sourceKey] = false
 			}
@@ -479,7 +533,14 @@ func prepareTextureUpload(img image.Image, binding textureBinding, vpImage bool,
 func prepareMeshBinding(textures map[string]cachedTexture, binding meshBinding, workDir string) (preparedUpload, error) {
 	images := make([]image.Image, 0, len(binding.SourceKeys))
 	for _, sourceKey := range binding.SourceKeys {
-		images = append(images, textures[sourceKey].Resized)
+		texture, exists := textures[sourceKey]
+		if !exists || texture.Resized == nil {
+			continue
+		}
+		images = append(images, texture.Resized)
+	}
+	if len(images) == 0 {
+		return preparedUpload{}, fmt.Errorf("build %s mesh: no source textures", binding.Name)
 	}
 	union := unionAlpha(images, binding.Config.AlphaThreshold)
 	mesh, _, err := utils.BuildGreedyMesh(union, binding.Config)

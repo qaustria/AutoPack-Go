@@ -134,3 +134,34 @@ func TestDiscordNotifierRejectsOversizedMessage(t *testing.T) {
 		t.Fatalf("oversized message error = %v", err)
 	}
 }
+
+func TestDiscordNotifierLabelsBatchPosition(t *testing.T) {
+	var content string
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if err := request.ParseMultipartForm(1 << 20); err != nil {
+			t.Error(err)
+			return
+		}
+		content = request.FormValue("payload_json")
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	notifier, err := NewDiscordNotifier(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notifier.client = server.Client()
+	var preview bytes.Buffer
+	if err := png.Encode(&preview, image.NewNRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatal(err)
+	}
+	if err := notifier.Notify(context.Background(), PortNotification{
+		PackID: "batch-pack", OutputJSON: []byte(`{"t":"buffer"}`), PreviewPNG: preview.Bytes(),
+		BatchIndex: 10, BatchTotal: 100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, "Cone Batch Logs") || !strings.Contains(content, "BATCHING [10/100]") || strings.Contains(content, "Cone Website Logs") {
+		t.Fatalf("batch webhook heading = %s", content)
+	}
+}

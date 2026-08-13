@@ -400,6 +400,42 @@ func TestRunPipelineReportsMissingTexturesBeforeUpload(t *testing.T) {
 	}
 }
 
+func TestRunPipelineKeepsDefaultsForMissingOptionalTextures(t *testing.T) {
+	zipPath := filepath.Join(t.TempDir(), "optional-missing.zip")
+	files := completePackImages()
+	for _, name := range []string{"emerald", "fireball", "shears"} {
+		delete(files, "Wrapper/assets/minecraft/textures/items/"+name+".png")
+	}
+	writePackImages(t, zipPath, files)
+	defaults, err := defaultPipelineValues()
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploader := &fakeUploader{}
+	var logs []string
+	output, err := runPipeline(context.Background(), zipPath, uploader, nil, func(message string) {
+		logs = append(logs, message)
+	})
+	if err != nil {
+		t.Fatalf("missing optional textures failed the pack: %v", err)
+	}
+	for _, field := range []string{"EmeraldTexture", "EmeraldVPImage", "EmeraldMesh", "FireballTexture", "FireballVPImage", "FireballMesh", "ShearsTexture", "ShearsVPImage", "ShearsMesh"} {
+		if !reflect.DeepEqual(output.Values[field], defaults[field]) {
+			t.Fatalf("%s = %#v, want retained default %#v", field, output.Values[field], defaults[field])
+		}
+	}
+	for _, request := range uploader.requests {
+		name := strings.ToLower(request.DisplayName)
+		if strings.Contains(name, "emerald") || strings.Contains(name, "fireball") || strings.Contains(name, "shears") {
+			t.Fatalf("optional missing texture was uploaded: %s", request.DisplayName)
+		}
+	}
+	logText := strings.Join(logs, "\n")
+	if !strings.Contains(logText, "Using default assets for missing optional textures: emerald, fireball, shears") {
+		t.Fatalf("missing optional defaults were not logged:\n%s", logText)
+	}
+}
+
 func writeCompletePack(t *testing.T, path string) {
 	t.Helper()
 	writePackImages(t, path, completePackImages())

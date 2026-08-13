@@ -133,7 +133,7 @@ func runBatch(ctx context.Context, args []string) error {
 			fmt.Printf("[%d/%d] FAILED %s: %v\n", index+1, len(queue), entry.Name, err)
 			continue
 		}
-		result, err := submitBatchPackWhenAvailable(ctx, client, endpoint, credentials, zipPath, filename, func(progress ProgressEvent) {
+		result, err := submitBatchPackWhenAvailable(ctx, client, endpoint, credentials, zipPath, filename, index+1, len(queue), func(progress ProgressEvent) {
 			message := progress.Message
 			if message == "" {
 				message = progress.Name
@@ -201,10 +201,10 @@ func (err *batchServerError) Error() string {
 	return "Cone returned " + err.Status + ": " + err.Message
 }
 
-func submitBatchPackWhenAvailable(ctx context.Context, client *http.Client, endpoint string, credentials robloxCredentials, zipPath, filename string, progress ProgressFunc) (batchSubmitResult, error) {
+func submitBatchPackWhenAvailable(ctx context.Context, client *http.Client, endpoint string, credentials robloxCredentials, zipPath, filename string, batchIndex, batchTotal int, progress ProgressFunc) (batchSubmitResult, error) {
 	deadline := time.Now().Add(30 * time.Minute)
 	for {
-		result, err := submitBatchPack(ctx, client, endpoint, credentials, zipPath, filename, progress)
+		result, err := submitBatchPack(ctx, client, endpoint, credentials, zipPath, filename, batchIndex, batchTotal, progress)
 		var serverError *batchServerError
 		if !errors.As(err, &serverError) || serverError.StatusCode != http.StatusTooManyRequests {
 			return result, err
@@ -227,7 +227,7 @@ func submitBatchPackWhenAvailable(ctx context.Context, client *http.Client, endp
 	}
 }
 
-func submitBatchPack(ctx context.Context, client *http.Client, endpoint string, credentials robloxCredentials, zipPath, filename string, progress ProgressFunc) (batchSubmitResult, error) {
+func submitBatchPack(ctx context.Context, client *http.Client, endpoint string, credentials robloxCredentials, zipPath, filename string, batchIndex, batchTotal int, progress ProgressFunc) (batchSubmitResult, error) {
 	file, err := os.Open(zipPath)
 	if err != nil {
 		return batchSubmitResult{}, fmt.Errorf("open queued pack: %w", err)
@@ -263,6 +263,8 @@ func submitBatchPack(ctx context.Context, client *http.Client, endpoint string, 
 		return batchSubmitResult{}, errors.New("batch mode currently requires a Roblox user ID")
 	}
 	request.Header.Set(robloxUserIDHeader, credentials.UserID)
+	request.Header.Set(batchIndexHeader, strconv.Itoa(batchIndex))
+	request.Header.Set(batchTotalHeader, strconv.Itoa(batchTotal))
 	response, err := client.Do(request)
 	if err != nil {
 		_ = reader.CloseWithError(err)

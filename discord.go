@@ -25,6 +25,8 @@ type PortNotification struct {
 	PackName   string
 	OutputJSON []byte
 	PreviewPNG []byte
+	BatchIndex int
+	BatchTotal int
 }
 
 type PortNotifier interface {
@@ -76,6 +78,13 @@ func (notifier *DiscordNotifier) Notify(ctx context.Context, notification PortNo
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	previewFilename := "cone-hotbar-" + notification.PackID + ".png"
+	heading := "## :orange_circle: Cone Website Logs \n**Texturepack ported successfully.**\n"
+	if notification.BatchIndex > 0 && notification.BatchTotal >= notification.BatchIndex {
+		heading = fmt.Sprintf(
+			"## :orange_circle: Cone Batch Logs\n**BATCHING [%d/%d]**\n**Texturepack ported successfully.**\n",
+			notification.BatchIndex, notification.BatchTotal,
+		)
+	}
 	payload, err := json.Marshal(map[string]any{
 		"flags": discordComponentsV2Flag,
 		"allowed_mentions": map[string]any{
@@ -87,7 +96,7 @@ func (notifier *DiscordNotifier) Notify(ctx context.Context, notification PortNo
 		"components": []any{map[string]any{
 			"type": 17,
 			"components": []any{
-				map[string]any{"type": 10, "content": "## :orange_circle: Cone Website Logs \n**Texturepack ported succesfully.**\n"},
+				map[string]any{"type": 10, "content": heading},
 				map[string]any{"type": 14, "spacing": 1},
 				map[string]any{"type": 10, "content": outputComponent},
 				map[string]any{"type": 14},

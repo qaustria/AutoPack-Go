@@ -83,17 +83,14 @@ func TestWebHandlerServesFrontendWithSecurityHeaders(t *testing.T) {
 	if !strings.Contains(response.Body.String(), `id="activity-log"`) {
 		t.Fatal("frontend is missing its live porting log")
 	}
-	if !strings.Contains(response.Body.String(), `id="json-output"`) || !strings.Contains(response.Body.String(), `id="copy-button"`) {
-		t.Fatal("frontend is missing its on-page JSON output or copy button")
+	if !strings.Contains(response.Body.String(), `id="result-modal"`) || !strings.Contains(response.Body.String(), `id="copy-button"`) || !strings.Contains(response.Body.String(), `id="close-result-button"`) {
+		t.Fatal("frontend is missing its centered JSON result modal or actions")
 	}
 	if !strings.Contains(response.Body.String(), `id="api-key-input"`) || !strings.Contains(response.Body.String(), `id="user-id-input"`) || !strings.Contains(response.Body.String(), "Assets: Read + Write") {
 		t.Fatal("frontend is missing Roblox credential fields or API-key instructions")
 	}
 	if !strings.Contains(response.Body.String(), `id="secret-toggle"`) {
 		t.Fatal("frontend is missing its API-key visibility control")
-	}
-	if !strings.Contains(response.Body.String(), `id="port-another-button"`) {
-		t.Fatal("frontend is missing its post-port reset action")
 	}
 	if !strings.Contains(response.Body.String(), "Minecraft 1.8.9") || !strings.Contains(response.Body.String(), "BridgeDuel") || strings.Contains(response.Body.String(), "Cone texture pack porter") {
 		t.Fatal("frontend branding does not identify Cone and the BridgeDuel conversion")
@@ -132,8 +129,8 @@ func TestWebHandlerServesFrontendWithSecurityHeaders(t *testing.T) {
 		t.Fatalf("GET font = %d %q", fontResponse.Code, fontResponse.Header().Get("Content-Type"))
 	}
 	for path, marker := range map[string]string{
-		"/styles.css": "body.has-result .drop-zone",
-		"/app.js":     `classList.add("has-result")`,
+		"/styles.css": ".result-modal",
+		"/app.js":     `classList.add("modal-open")`,
 	} {
 		assetRequest := httptest.NewRequest(http.MethodGet, path, nil)
 		assetResponse := httptest.NewRecorder()
@@ -234,6 +231,8 @@ func TestCredentialWebHandlerUsesOnlyRequestCredentials(t *testing.T) {
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	request.Header.Set(robloxAPIKeyHeader, "request-secret")
 	request.Header.Set(robloxUserIDHeader, "123456")
+	request.Header.Set(batchIndexHeader, "10")
+	request.Header.Set(batchTotalHeader, "100")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -244,6 +243,9 @@ func TestCredentialWebHandlerUsesOnlyRequestCredentials(t *testing.T) {
 	}
 	if notifier.notification.PackID != "0123456789abcdef" || string(notifier.notification.PreviewPNG) != "preview" {
 		t.Fatalf("webhook notification = %#v", notifier.notification)
+	}
+	if notifier.notification.BatchIndex != 10 || notifier.notification.BatchTotal != 100 {
+		t.Fatalf("webhook batch position = %d/%d", notifier.notification.BatchIndex, notifier.notification.BatchTotal)
 	}
 	decoded, err := decodeCompressedJSON(notifier.notification.OutputJSON)
 	if err != nil {

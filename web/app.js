@@ -22,10 +22,10 @@ const statusDetail = document.querySelector("#status-detail");
 const statusPercent = document.querySelector("#status-percent");
 const statusError = document.querySelector("#status-error");
 const activityLog = document.querySelector("#activity-log");
-const resultPanel = document.querySelector("#result-panel");
-const jsonOutput = document.querySelector("#json-output");
+const resultModal = document.querySelector("#result-modal");
+const resultBackdrop = document.querySelector("#result-backdrop");
 const copyButton = document.querySelector("#copy-button");
-const portAnotherButton = document.querySelector("#port-another-button");
+const closeResultButton = document.querySelector("#close-result-button");
 
 let currentFile = null;
 let resultJSON = "";
@@ -183,14 +183,12 @@ function updateConvertState() {
 }
 
 function resetOutput() {
-  document.body.classList.remove("has-result");
   progressPanel.hidden = true;
-  resultPanel.hidden = true;
+  closeResultModal(false);
   statusError.hidden = true;
   activityLog.replaceChildren();
   resultJSON = "";
   playedCompleteSound = false;
-  jsonOutput.textContent = "";
   copyButton.textContent = "Copy JSON";
   setConeState("idle");
 }
@@ -215,9 +213,8 @@ function updateProgress(percent, label, detail) {
 }
 
 function showError(message) {
-  document.body.classList.remove("has-result");
   progressPanel.hidden = false;
-  resultPanel.hidden = true;
+  closeResultModal(false);
   statusLabel.textContent = "Couldn’t convert pack";
   statusDetail.textContent = "Check the file and try again.";
   statusError.textContent = message;
@@ -263,16 +260,18 @@ function handleProgress(progress) {
 
 function handleResult(event) {
   resultJSON = JSON.stringify(event.result);
-  jsonOutput.textContent = resultJSON;
-  resultPanel.hidden = false;
-  document.body.classList.add("has-result");
+  resultModal.hidden = false;
+  document.body.classList.add("modal-open");
   setConeState("accepted");
+  window.requestAnimationFrame(() => copyButton.focus({ preventScroll: true }));
 }
 
-function portAnotherPack() {
-  playSound("tap");
-  setFile(null);
-  dropZone.scrollIntoView({ behavior: "smooth", block: "center" });
+function closeResultModal(withSound = true) {
+  if (resultModal.hidden) return;
+  if (withSound) playSound("tap");
+  resultModal.hidden = true;
+  document.body.classList.remove("modal-open");
+  convertButton.focus({ preventScroll: true });
 }
 
 async function copyJSON() {
@@ -280,13 +279,14 @@ async function copyJSON() {
   try {
     await navigator.clipboard.writeText(resultJSON);
   } catch {
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(jsonOutput);
-    selection.removeAllRanges();
-    selection.addRange(range);
+    const field = document.createElement("textarea");
+    field.value = resultJSON;
+    field.setAttribute("readonly", "");
+    field.className = "copy-fallback";
+    document.body.append(field);
+    field.select();
     document.execCommand("copy");
-    selection.removeAllRanges();
+    field.remove();
   }
   copyButton.textContent = "Copied";
   playSound("copy");
@@ -333,7 +333,11 @@ removeFile.addEventListener("click", () => {
   setFile(null);
 });
 copyButton.addEventListener("click", copyJSON);
-portAnotherButton.addEventListener("click", portAnotherPack);
+closeResultButton.addEventListener("click", () => closeResultModal());
+resultBackdrop.addEventListener("click", () => closeResultModal());
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !resultModal.hidden) closeResultModal();
+});
 secretToggle.addEventListener("click", () => {
   playSound("tap");
   const showing = apiKeyInput.type === "text";

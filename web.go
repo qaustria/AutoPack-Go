@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,8 @@ type requestProcessorFactory func(context.Context, string, string) (uploadProces
 const (
 	robloxAPIKeyHeader        = "X-Cone-Roblox-Api-Key"
 	robloxUserIDHeader        = "X-Cone-Roblox-User-Id"
+	batchIndexHeader          = "X-Cone-Batch-Index"
+	batchTotalHeader          = "X-Cone-Batch-Total"
 	defaultMaxConcurrentPorts = 2
 )
 
@@ -146,6 +149,11 @@ func (h *webHandler) convert(response http.ResponseWriter, request *http.Request
 		return
 	}
 	processor := h.processor
+	batchIndex, batchTotal, err := batchPositionFromHeaders(request.Header)
+	if err != nil {
+		http.Error(response, err.Error(), http.StatusBadRequest)
+		return
+	}
 	jobKey := sha256.Sum256([]byte("cone-shared-web-processor"))
 	var apiKey, userID string
 	if h.processorFactory != nil {
@@ -232,6 +240,7 @@ func (h *webHandler) convert(response http.ResponseWriter, request *http.Request
 		notifyErr := h.notifier.Notify(notifyContext, PortNotification{
 			PackID: result.PackID, PackName: result.PackName,
 			OutputJSON: outputJSON, PreviewPNG: result.PreviewPNG,
+			BatchIndex: batchIndex, BatchTotal: batchTotal,
 		})
 		cancel()
 		if notifyErr != nil {
@@ -245,6 +254,23 @@ func (h *webHandler) convert(response http.ResponseWriter, request *http.Request
 	writeEvent(webStreamEvent{
 		Type: "result", Result: &result, Filename: downloadFilename(filename), PackID: result.PackID,
 	})
+}
+
+func batchPositionFromHeaders(headers http.Header) (int, int, error) {
+	indexValue := strings.TrimSpace(headers.Get(batchIndexHeader))
+	totalValue := strings.TrimSpace(headers.Get(batchTotalHeader))
+	if indexValue == "" && totalValue == "" {
+		return 0, 0, nil
+	}
+	if indexValue == "" || totalValue == "" {
+		return 0, 0, errors.New("batch index and total headers must be provided together")
+	}
+	index, indexErr := strconv.Atoi(indexValue)
+	total, totalErr := strconv.Atoi(totalValue)
+	if indexErr != nil || totalErr != nil || index < 1 || total < index || total > maxBatchQueueEntries {
+		return 0, 0, fmt.Errorf("batch position must satisfy 1 <= index <= total <= %d", maxBatchQueueEntries)
+	}
+	return index, total, nil
 }
 
 // reserveJob prevents duplicate work per Roblox credential and caps total
