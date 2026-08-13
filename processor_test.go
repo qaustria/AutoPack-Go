@@ -40,7 +40,7 @@ func TestProcessUploadProducesJSONReadyResultAndProgress(t *testing.T) {
 		logText.WriteString(event.Message)
 		logText.WriteByte('\n')
 	}
-	for _, expected := range []string{"Receiving browser-upload.ZIP", "Found ", "Resized ", "greedy meshes", "Uploaded Cone ", "Generated JSON mapping"} {
+	for _, expected := range []string{"Received browser-upload.ZIP", "Found ", "Resized ", "greedy meshes", "Uploaded Cone ", "Generated JSON mapping"} {
 		if !strings.Contains(logText.String(), expected) {
 			t.Fatalf("progress log does not contain %q:\n%s", expected, logText.String())
 		}
@@ -84,7 +84,7 @@ func TestProcessUploadEnforcesCompressedSizeLimit(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "exceeds 4-byte limit") {
 		t.Fatalf("size-limit error = %v", err)
 	}
-	if len(events) != 2 || events[0].Stage != ProgressReceiving || events[1].Stage != ProgressFailed {
+	if len(events) != 1 || events[0].Stage != ProgressFailed {
 		t.Fatalf("size-limit progress = %#v", events)
 	}
 }

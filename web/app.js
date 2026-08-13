@@ -194,7 +194,13 @@ async function copyJSON() {
 
 async function consumeEvents(response) {
   if (!response.ok) {
-    throw new Error((await response.text()).trim() || `Server returned ${response.status}`);
+    const responseText = (await response.text()).trim();
+    const contentType = response.headers.get("content-type") || "";
+    const isHTML = contentType.includes("text/html") || /(?:<!?doctype\s+html|<html)/i.test(responseText);
+    if (isHTML) {
+      throw new Error(`Cone server is temporarily unavailable (${response.status}). Try again shortly.`);
+    }
+    throw new Error(responseText || `Server returned ${response.status}`);
   }
   if (!response.body) {
     throw new Error("This browser cannot read conversion progress.");

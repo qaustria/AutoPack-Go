@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -55,23 +59,27 @@ func TestDiscordNotifierSendsMessageAndHotbarPreview(t *testing.T) {
 	}
 	notifier.client = server.Client()
 	output := []byte(`{"m":null,"t":"buffer","zbase64":"abc"}`)
-	preview := []byte("preview-png")
+	var previewBuffer bytes.Buffer
+	previewImage := image.NewNRGBA(image.Rect(0, 0, 4, 4))
+	previewImage.SetNRGBA(0, 0, color.NRGBA{R: 255, A: 255})
+	if err := png.Encode(&previewBuffer, previewImage); err != nil {
+		t.Fatal(err)
+	}
+	preview := previewBuffer.Bytes()
 	if err := notifier.Notify(context.Background(), PortNotification{
 		PackID: "0123456789abcdef", OutputJSON: output, PreviewPNG: preview,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{
-		"**:exclamation: A Pack has been ported!**",
-		"Pack ID: `0123456789abcdef`",
-		"```json\n" + string(output) + "\n```",
-	} {
-		if !strings.Contains(gotContent, expected) {
-			t.Fatalf("webhook content does not contain %q: %s", expected, gotContent)
-		}
+	if gotContent != string(output) {
+		t.Fatalf("webhook content = %q, want only %q", gotContent, output)
 	}
-	if string(gotPreview) != string(preview) {
-		t.Fatalf("preview attachment = %q, want %q", gotPreview, preview)
+	labeledPreview, err := png.Decode(bytes.NewReader(gotPreview))
+	if err != nil {
+		t.Fatalf("decode labeled preview: %v", err)
+	}
+	if labeledPreview.Bounds().Dx() != 4 || labeledPreview.Bounds().Dy() != 4+previewIDFooter {
+		t.Fatalf("labeled preview size = %v", labeledPreview.Bounds().Size())
 	}
 }
 
@@ -81,7 +89,7 @@ func TestDiscordNotifierRejectsOversizedMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = notifier.Notify(context.Background(), PortNotification{
-		PackID: "pack", OutputJSON: []byte(strings.Repeat("x", discordMessageLimit)), PreviewPNG: []byte("png"),
+		PackID: "pack", OutputJSON: []byte(strings.Repeat("x", discordMessageLimit+1)), PreviewPNG: []byte("png"),
 	})
 	if err == nil || !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("oversized message error = %v", err)

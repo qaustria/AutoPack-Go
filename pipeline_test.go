@@ -116,7 +116,7 @@ func TestRunPipelineBuildsSchemaAndDeduplicatesSharedMeshes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	notificationContent := fmt.Sprintf("**:exclamation: A Pack has been ported!**\nPack ID: `%s`\n```json\n%s\n```", "0123456789abcdef", notificationJSON)
+	notificationContent := string(notificationJSON)
 	if len(notificationContent) > discordMessageLimit {
 		t.Fatalf("compressed full template does not fit in Discord: %d characters", len(notificationContent))
 	}

@@ -57,9 +57,16 @@ func (notifier *DiscordNotifier) Notify(ctx context.Context, notification PortNo
 	if notification.PackID == "" || len(notification.OutputJSON) == 0 || len(notification.PreviewPNG) == 0 {
 		return errors.New("Discord notification is incomplete")
 	}
-	content := fmt.Sprintf("`%s`\n%s", notification.PackID, notification.OutputJSON)
+	// Keep the message body to the one value users paste into the game. The
+	// pack ID is rendered into the attached preview instead of consuming part
+	// of Discord's strict 2,000-character message allowance.
+	content := string(notification.OutputJSON)
 	if len(content) > discordMessageLimit {
 		return fmt.Errorf("compressed pack JSON is too large for one Discord message (%d characters)", len(content))
+	}
+	previewPNG, err := addPackIDToPreview(notification.PreviewPNG, notification.PackID)
+	if err != nil {
+		return fmt.Errorf("label Discord preview: %w", err)
 	}
 
 	var body bytes.Buffer
@@ -84,7 +91,7 @@ func (notifier *DiscordNotifier) Notify(ctx context.Context, notification PortNo
 	if err != nil {
 		return fmt.Errorf("create Discord preview attachment: %w", err)
 	}
-	if _, err := previewPart.Write(notification.PreviewPNG); err != nil {
+	if _, err := previewPart.Write(previewPNG); err != nil {
 		return fmt.Errorf("write Discord preview attachment: %w", err)
 	}
 	if err := writer.Close(); err != nil {
