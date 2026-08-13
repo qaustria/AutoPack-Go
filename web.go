@@ -57,6 +57,7 @@ type webStreamEvent struct {
 	Progress *ProgressEvent  `json:"progress,omitempty"`
 	Result   *PipelineResult `json:"result,omitempty"`
 	Filename string          `json:"filename,omitempty"`
+	PackID   string          `json:"packId,omitempty"`
 	Message  string          `json:"message,omitempty"`
 }
 
@@ -242,7 +243,7 @@ func (h *webHandler) convert(response http.ResponseWriter, request *http.Request
 	}
 	writeEvent(webStreamEvent{Type: "progress", Progress: &notificationEvent})
 	writeEvent(webStreamEvent{
-		Type: "result", Result: &result, Filename: downloadFilename(filename),
+		Type: "result", Result: &result, Filename: downloadFilename(filename), PackID: result.PackID,
 	})
 }
 

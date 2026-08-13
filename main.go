@@ -35,6 +35,9 @@ func run() error {
 	if len(args) == 1 && (args[0] == "web" || args[0] == "--web") {
 		return runWeb(ctx)
 	}
+	if len(args) >= 1 && args[0] == "batch" {
+		return runBatch(ctx, args[1:])
+	}
 	return runCLI(ctx, args)
 }
 

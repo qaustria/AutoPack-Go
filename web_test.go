@@ -179,12 +179,13 @@ func TestWebHandlerStreamsProgressAndJSONResult(t *testing.T) {
 	var last struct {
 		Type     string         `json:"type"`
 		Filename string         `json:"filename"`
+		PackID   string         `json:"packId"`
 		Result   map[string]any `json:"result"`
 	}
 	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil {
 		t.Fatal(err)
 	}
-	if last.Type != "result" || last.Filename != "Fractal 512x_cone.json" || last.Result["t"] != "buffer" || last.Result["zbase64"] == "" {
+	if last.Type != "result" || last.Filename != "Fractal 512x_cone.json" || last.PackID != "0123456789abcdef" || last.Result["t"] != "buffer" || last.Result["zbase64"] == "" {
 		t.Fatalf("unexpected result event: %#v", last)
 	}
 	encodedResult, err := json.Marshal(last.Result)

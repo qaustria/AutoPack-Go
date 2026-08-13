@@ -8,5 +8,6 @@
 /*_cone.json
 /.playwright-cli/
 /output/
+/batch-output/
 /data/
 *~

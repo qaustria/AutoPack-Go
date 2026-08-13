@@ -67,6 +67,29 @@ go run . /path/to/texture-pack.zip
 
 You can use `ROBLOX_API_KEY` and `ROBLOX_USER_ID` environment variables instead. Cone writes `<pack>_cone.json` beside the input ZIP.
 
+## Administrative batch import
+
+The batch importer is a separate command and is not exposed anywhere in the
+public website. It reads pack download links from a CSV file or a public Google
+Sheet, submits them one at a time to the running local Cone service, and thereby
+uses the same port-history database and Discord notification path as a normal
+website conversion.
+
+```bash
+go run . batch 'https://docs.google.com/spreadsheets/d/SHEET_ID/edit#gid=0'
+```
+
+The sheet must be shared as **Anyone with the link → Viewer**, and download-link
+cells must contain their complete `https://...` URL. `ROBLOX_API_KEY` and
+`ROBLOX_USER_ID` select the Roblox account used for the import. The command
+defaults to `http://127.0.0.1:8080/api/convert`; override that with
+`CONE_BATCH_ENDPOINT` only when the trusted Cone service is elsewhere.
+
+Progress is checkpointed in `data/batch-queue.json`, so rerunning the command
+skips completed links and retries unfinished ones. Returned JSON is also copied
+to the gitignored `batch-output/` directory. API keys are sent only in request
+headers and are never written to the checkpoint or output files.
+
 ## Use the processing library
 
 ```go
