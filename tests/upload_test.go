@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,8 @@ import (
 	"time"
 
 	. "autopack/utils"
+	"github.com/robloxapi/rbxfile"
+	"github.com/robloxapi/rbxfile/rbxl"
 )
 
 const testMaxAssetUploadSize = 20 << 20
@@ -114,6 +117,54 @@ func TestAssetUploaderStreamsModelAndPollsOperation(t *testing.T) {
 	}
 	if polls != 2 {
 		t.Fatalf("operation polls = %d, want 2", polls)
+	}
+}
+
+func TestAssetUploaderResolvesImportedModelToContainedMeshID(t *testing.T) {
+	modelPath := filepath.Join(t.TempDir(), "sword.glb")
+	if err := os.WriteFile(modelPath, []byte("glTF-test-data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := rbxfile.NewRoot()
+	meshPart := rbxfile.NewInstance("MeshPart")
+	meshPart.Properties["MeshId"] = rbxfile.ValueContent("rbxassetid://556677")
+	root.Instances = append(root.Instances, meshPart)
+	var importedModel bytes.Buffer
+	if _, err := (rbxl.Encoder{Mode: rbxl.Model}).Encode(&importedModel, root); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/assets/v1/assets":
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(response, `{"path":"operations/import-op"}`)
+		case request.Method == http.MethodGet && request.URL.Path == "/assets/v1/operations/import-op":
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(response, `{"path":"operations/import-op","done":true,"response":{"assetId":"9988","assetType":"Model"}}`)
+		case request.Method == http.MethodGet && request.URL.Path == "/asset-delivery-api/v1/assetId/9988":
+			response.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = response.Write(importedModel.Bytes())
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	uploader, err := NewAssetUploader(UploaderConfig{
+		APIKey: "key", Creator: AssetCreator{UserID: "1"}, BaseURL: server.URL,
+		HTTPClient: server.Client(), PollInterval: time.Millisecond, PollTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset, err := uploader.Upload(context.Background(), UploadRequest{
+		FilePath: modelPath, DisplayName: "Cone sword mesh",
+		AssetType: AssetTypeModel, ResolveMeshID: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asset.AssetID != "556677" || asset.AssetType != "Mesh" {
+		t.Fatalf("resolved asset = %+v, want contained mesh 556677", asset)
 	}
 }
 

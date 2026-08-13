@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"autopack/utils"
 )
 
 //go:embed web/*
@@ -104,7 +106,7 @@ func (h *webHandler) health(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	response.Header().Set("Content-Type", "application/json")
-	_, _ = io.WriteString(response, "{\"status\":\"ok\"}\n")
+	_ = json.NewEncoder(response).Encode(map[string]string{"status": "ok", "version": utils.Version})
 }
 
 func (h *webHandler) convert(response http.ResponseWriter, request *http.Request) {

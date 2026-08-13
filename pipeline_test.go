@@ -140,10 +140,10 @@ func TestRunPipelineBuildsSchemaAndDeduplicatesSharedMeshes(t *testing.T) {
 	}
 	meshes := make(map[string]int)
 	for _, request := range uploader.requests {
-		if request.AssetType == utils.AssetTypeMesh {
+		if request.ResolveMeshID {
 			meshes[request.DisplayName]++
-			if filepath.Ext(request.FilePath) != ".mesh" {
-				t.Fatalf("mesh upload %q uses %q, want .mesh", request.DisplayName, request.FilePath)
+			if request.AssetType != utils.AssetTypeModel || filepath.Ext(request.FilePath) != ".glb" {
+				t.Fatalf("mesh import %q uses type %s at %q, want Model .glb", request.DisplayName, request.AssetType, request.FilePath)
 			}
 		}
 	}
@@ -241,15 +241,29 @@ func TestRunPipelineRemovesCanvasWideAlphaNoiseFromUploadArtifacts(t *testing.T)
 	if lowAlpha != 0 || transparent == 0 {
 		t.Fatalf("uploaded sword VP background: transparent=%d low-alpha=%d", transparent, lowAlpha)
 	}
-	mesh := uploader.files["Cone sword mesh"]
-	if len(mesh) < 25 {
-		t.Fatalf("sword mesh is too short: %d", len(mesh))
+	glb := uploader.files["Cone sword mesh"]
+	if len(glb) < 28 || binary.LittleEndian.Uint32(glb[:4]) != 0x46546c67 {
+		t.Fatalf("sword GLB is invalid or too short: %d bytes", len(glb))
 	}
-	vertices := int(binary.LittleEndian.Uint32(mesh[17:21]))
+	jsonLength := int(binary.LittleEndian.Uint32(glb[12:16]))
+	var document struct {
+		BufferViews []struct {
+			ByteOffset int `json:"byteOffset"`
+		} `json:"bufferViews"`
+		Accessors []struct {
+			BufferView int `json:"bufferView"`
+			Count      int `json:"count"`
+		} `json:"accessors"`
+	}
+	if err := json.Unmarshal(glb[20:20+jsonLength], &document); err != nil {
+		t.Fatal(err)
+	}
+	uvAccessor := document.Accessors[2]
+	uvStart := 20 + jsonLength + 8 + document.BufferViews[uvAccessor.BufferView].ByteOffset
 	minU, maxU := float32(1), float32(0)
-	for vertex := 0; vertex < vertices; vertex++ {
-		offset := 25 + vertex*40 + 24
-		u := math.Float32frombits(binary.LittleEndian.Uint32(mesh[offset : offset+4]))
+	for vertex := 0; vertex < uvAccessor.Count; vertex++ {
+		offset := uvStart + vertex*8
+		u := math.Float32frombits(binary.LittleEndian.Uint32(glb[offset : offset+4]))
 		if u < minU {
 			minU = u
 		}

@@ -186,6 +186,7 @@ func runPipeline(ctx context.Context, zipPath string, uploader UploadBatcher, pr
 	if uploader == nil {
 		return PipelineResult{}, errors.New("upload client is nil")
 	}
+	logPipeline(log, "Cone engine "+utils.Version)
 	logPipeline(log, "Reading Minecraft texture pack")
 	pack, err := utils.UnzipTexturePack(zipPath)
 	if err != nil {
@@ -474,20 +475,23 @@ func prepareMeshBinding(textures map[string]cachedTexture, binding meshBinding, 
 	if err != nil {
 		return preparedUpload{}, fmt.Errorf("build %s mesh: %w", binding.Name, err)
 	}
-	// Keep one union mesh for every material variant. Roblox's GLB endpoint
-	// creates a Model package ID, which cannot be assigned to MeshPart.MeshId.
-	// Use Roblox's native stream for upload; utils.EncodeGLB remains the
-	// portable library export.
-	robloxMesh, err := utils.EncodeRobloxMesh(mesh)
+	// Open Cloud only accepts native .mesh bytes downloaded from Asset Delivery;
+	// it does not import generated geometry through the Mesh endpoint. Import the
+	// generated GLB as a Model, then the uploader resolves the contained
+	// MeshPart's actual MeshId for the output JSON.
+	robloxModel, err := utils.EncodeGeometryGLB(mesh)
 	if err != nil {
-		return preparedUpload{}, fmt.Errorf("encode %s Roblox mesh: %w", binding.Name, err)
+		return preparedUpload{}, fmt.Errorf("encode %s Roblox GLB: %w", binding.Name, err)
 	}
-	path := filepath.Join(workDir, binding.Name+".mesh")
-	if err := os.WriteFile(path, robloxMesh, 0o644); err != nil {
-		return preparedUpload{}, fmt.Errorf("write %s Roblox mesh: %w", binding.Name, err)
+	path := filepath.Join(workDir, binding.Name+".glb")
+	if err := os.WriteFile(path, robloxModel, 0o644); err != nil {
+		return preparedUpload{}, fmt.Errorf("write %s Roblox GLB: %w", binding.Name, err)
 	}
 	return preparedUpload{
-		Request:    utils.UploadRequest{FilePath: path, DisplayName: "Cone " + binding.Name + " mesh", AssetType: utils.AssetTypeMesh},
+		Request: utils.UploadRequest{
+			FilePath: path, DisplayName: "Cone " + binding.Name + " mesh",
+			AssetType: utils.AssetTypeModel, ResolveMeshID: true,
+		},
 		JSONFields: binding.JSONFields,
 	}, nil
 }

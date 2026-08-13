@@ -19,6 +19,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/robloxapi/rbxfile"
+	"github.com/robloxapi/rbxfile/rbxl"
 )
 
 const (
@@ -87,10 +90,11 @@ type UploaderConfig struct {
 // UploaderConfig.Description when empty. DisplayName falls back to the filename
 // without its extension when empty.
 type UploadRequest struct {
-	FilePath    string    `json:"filePath"`
-	DisplayName string    `json:"displayName"`
-	Description string    `json:"description,omitempty"`
-	AssetType   AssetType `json:"assetType"`
+	FilePath      string    `json:"filePath"`
+	DisplayName   string    `json:"displayName"`
+	Description   string    `json:"description,omitempty"`
+	AssetType     AssetType `json:"assetType"`
+	ResolveMeshID bool      `json:"resolveMeshId,omitempty"`
 }
 
 // ModerationResult is the moderation state returned by Roblox.
@@ -469,6 +473,14 @@ func (u *AssetUploader) Upload(ctx context.Context, request UploadRequest) (Uplo
 					asset.AssetType, request.AssetType,
 				)
 			}
+			if request.ResolveMeshID {
+				meshID, resolveErr := u.resolveImportedModelMeshID(ctx, asset.AssetID)
+				if resolveErr != nil {
+					return UploadedAsset{}, fmt.Errorf("resolve imported model %s to its MeshPart mesh: %w", asset.AssetID, resolveErr)
+				}
+				asset.AssetID = meshID
+				asset.AssetType = string(AssetTypeMesh)
+			}
 			return asset, nil
 		}
 		delay, retry := u.retryDelay(err, attempt)
@@ -477,6 +489,74 @@ func (u *AssetUploader) Upload(ctx context.Context, request UploadRequest) (Uplo
 		}
 		u.noteRateLimit(request.AssetType, delay, attempt)
 	}
+}
+
+// resolveImportedModelMeshID follows the supported custom-mesh upload flow:
+// upload GLB/FBX as a Model, download the resulting package, then return the
+// MeshPart's internal MeshId. Open Cloud's Mesh upload endpoint explicitly
+// accepts only mesh bytes previously downloaded from Asset Delivery; it is not
+// a custom geometry importer.
+func (u *AssetUploader) resolveImportedModelMeshID(ctx context.Context, modelID string) (string, error) {
+	endpoint := u.baseURL + "/asset-delivery-api/v1/assetId/" + url.PathEscape(modelID)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("x-api-key", u.apiKey)
+	request.Header.Set("Accept", "application/octet-stream")
+	response, err := u.client.Do(request)
+	if err != nil {
+		return "", fmt.Errorf("download imported model: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+		return "", &APIError{StatusCode: response.StatusCode, Status: response.Status, Body: strings.TrimSpace(string(body))}
+	}
+	root, _, err := rbxl.Decoder{}.Decode(io.LimitReader(response.Body, maxAssetUploadSize))
+	if err != nil {
+		return "", fmt.Errorf("decode imported Roblox model: %w", err)
+	}
+	var meshIDs []string
+	seenMeshIDs := make(map[string]struct{})
+	var visit func([]*rbxfile.Instance)
+	visit = func(instances []*rbxfile.Instance) {
+		for _, instance := range instances {
+			if instance.ClassName == "MeshPart" {
+				for _, name := range []string{"MeshContent", "MeshId", "MeshID"} {
+					if value, ok := instance.Properties[name]; ok {
+						if id := assetIDFromContent(value.String()); id != "" {
+							if _, seen := seenMeshIDs[id]; !seen {
+								seenMeshIDs[id] = struct{}{}
+								meshIDs = append(meshIDs, id)
+							}
+						}
+					}
+				}
+			}
+			visit(instance.Children)
+		}
+	}
+	visit(root.Instances)
+	if len(meshIDs) != 1 {
+		return "", fmt.Errorf("imported model contains %d usable MeshPart mesh IDs, want exactly 1", len(meshIDs))
+	}
+	return meshIDs[0], nil
+}
+
+func assetIDFromContent(value string) string {
+	value = strings.TrimSpace(value)
+	for _, prefix := range []string{"rbxassetid://", "https://www.roblox.com/asset/?id=", "http://www.roblox.com/asset/?id="} {
+		value = strings.TrimPrefix(value, prefix)
+	}
+	if parsed, err := url.Parse(value); err == nil && parsed.Query().Get("id") != "" {
+		value = parsed.Query().Get("id")
+	}
+	value = strings.TrimSpace(value)
+	if _, err := strconv.ParseUint(value, 10, 64); err != nil {
+		return ""
+	}
+	return value
 }
 
 // GrantOpenUse permanently allows every Roblox creator and game to use the
@@ -581,6 +661,9 @@ func (u *AssetUploader) createAssetLimited(
 }
 
 func (u *AssetUploader) validateRequest(request UploadRequest) (UploadRequest, string, error) {
+	if request.ResolveMeshID && request.AssetType != AssetTypeModel {
+		return request, "", errors.New("resolve-mesh-id requires a Model upload")
+	}
 	if strings.TrimSpace(request.FilePath) == "" {
 		return request, "", errors.New("upload file path is empty")
 	}
@@ -995,14 +1078,14 @@ func (u *AssetUploader) UploadManyWithProgress(ctx context.Context, jobs []Uploa
 		assetIDs := make([]string, 0, len(results))
 		for _, result := range results {
 			if result.Error == "" && result.Asset != nil && result.Asset.AssetID != "" &&
-				(result.Request.AssetType == AssetTypeMesh || result.Request.AssetType == AssetTypeImage || result.Request.AssetType == AssetTypeDecal) {
+				(result.Request.AssetType == AssetTypeMesh || result.Request.AssetType == AssetTypeImage || result.Request.AssetType == AssetTypeDecal || result.Request.ResolveMeshID) {
 				assetIDs = append(assetIDs, result.Asset.AssetID)
 			}
 		}
 		if err := u.GrantOpenUse(ctx, assetIDs); err != nil {
 			for index := range results {
 				if results[index].Error == "" && results[index].Asset != nil &&
-					(results[index].Request.AssetType == AssetTypeMesh || results[index].Request.AssetType == AssetTypeImage || results[index].Request.AssetType == AssetTypeDecal) {
+					(results[index].Request.AssetType == AssetTypeMesh || results[index].Request.AssetType == AssetTypeImage || results[index].Request.AssetType == AssetTypeDecal || results[index].Request.ResolveMeshID) {
 					results[index].Asset = nil
 					results[index].Error = err.Error()
 				}

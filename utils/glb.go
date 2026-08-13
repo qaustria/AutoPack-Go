@@ -11,7 +11,7 @@ import (
 
 const (
 	// Version identifies the AutoPack library in generated GLB metadata.
-	Version = "1.3.0"
+	Version = "1.4.0"
 
 	glbMagic       = 0x46546c67
 	glbVersion     = 2
@@ -40,9 +40,22 @@ type accessor struct {
 	Max           []float32 `json:"max,omitempty"`
 }
 
-// EncodeGLB writes glTF 2.0 directly. It deliberately uses no Blender or CGo
-// dependency, and embeds the source PNG so the output remains a single file.
+// EncodeGLB writes textured glTF 2.0 directly. It deliberately uses no Blender
+// or CGo dependency, and embeds the source PNG so the output remains one file.
 func EncodeGLB(mesh Mesh, pngBytes []byte, imageName string) ([]byte, error) {
+	if len(pngBytes) < 8 || !bytes.Equal(pngBytes[:8], []byte{137, 80, 78, 71, 13, 10, 26, 10}) {
+		return nil, errors.New("texture is not a PNG")
+	}
+	return encodeGLB(mesh, pngBytes, imageName)
+}
+
+// EncodeGeometryGLB writes only geometry. Cone uses this for Roblox's custom
+// model importer because the game applies its separately uploaded Texture ID.
+func EncodeGeometryGLB(mesh Mesh) ([]byte, error) {
+	return encodeGLB(mesh, nil, "")
+}
+
+func encodeGLB(mesh Mesh, pngBytes []byte, imageName string) ([]byte, error) {
 	vertexCount := len(mesh.Positions) / 3
 	if vertexCount == 0 || len(mesh.Positions)%3 != 0 {
 		return nil, errors.New("mesh has no valid positions")
@@ -52,9 +65,6 @@ func EncodeGLB(mesh Mesh, pngBytes []byte, imageName string) ([]byte, error) {
 	}
 	if len(mesh.Indices) == 0 || len(mesh.Indices)%3 != 0 {
 		return nil, errors.New("mesh has no valid triangles")
-	}
-	if len(pngBytes) < 8 || !bytes.Equal(pngBytes[:8], []byte{137, 80, 78, 71, 13, 10, 26, 10}) {
-		return nil, errors.New("texture is not a PNG")
 	}
 
 	bin := make([]byte, 0, len(mesh.Positions)*4+len(mesh.Normals)*4+len(mesh.TexCoords)*4+len(mesh.Indices)*4+len(pngBytes)+32)
@@ -90,7 +100,10 @@ func EncodeGLB(mesh Mesh, pngBytes []byte, imageName string) ([]byte, error) {
 		}
 	}
 	indexView := appendView(indexBytes, targetElements)
-	imageView := appendView(pngBytes, 0)
+	imageView := -1
+	if len(pngBytes) != 0 {
+		imageView = appendView(pngBytes, 0)
+	}
 	for len(bin)%4 != 0 {
 		bin = append(bin, 0)
 	}
@@ -119,19 +132,26 @@ func EncodeGLB(mesh Mesh, pngBytes []byte, imageName string) ([]byte, error) {
 	if mesh.AlphaBlend {
 		alphaMode = "BLEND"
 	}
+	primitive := map[string]any{
+		"attributes": map[string]int{"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2},
+		"indices":    3, "mode": 4,
+	}
 	doc := map[string]any{
 		"asset":  map[string]any{"version": "2.0", "generator": "AutoPack Go " + Version},
 		"scene":  0,
 		"scenes": []any{map[string]any{"name": "Scene", "nodes": []int{0}}},
 		"nodes":  []any{map[string]any{"name": "PixelArtObject", "mesh": 0}},
 		"meshes": []any{map[string]any{
-			"name": "PixelArtMesh",
-			"primitives": []any{map[string]any{
-				"attributes": map[string]int{"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2},
-				"indices":    3, "material": 0, "mode": 4,
-			}},
+			"name":       "PixelArtMesh",
+			"primitives": []any{primitive},
 		}},
-		"materials": []any{map[string]any{
+		"accessors":   accessors,
+		"bufferViews": views,
+		"buffers":     []any{map[string]any{"byteLength": len(bin)}},
+	}
+	if imageView >= 0 {
+		primitive["material"] = 0
+		doc["materials"] = []any{map[string]any{
 			"name":        "PixelArtMaterial",
 			"doubleSided": true,
 			"alphaMode":   alphaMode,
@@ -140,13 +160,10 @@ func EncodeGLB(mesh Mesh, pngBytes []byte, imageName string) ([]byte, error) {
 				"metallicFactor":   0,
 				"roughnessFactor":  1,
 			},
-		}},
-		"textures":    []any{map[string]any{"name": "PixelArtTexture", "sampler": 0, "source": 0}},
-		"samplers":    []any{map[string]any{"magFilter": 9728, "minFilter": 9728}},
-		"images":      []any{map[string]any{"name": imageName, "bufferView": imageView, "mimeType": "image/png"}},
-		"accessors":   accessors,
-		"bufferViews": views,
-		"buffers":     []any{map[string]any{"byteLength": len(bin)}},
+		}}
+		doc["textures"] = []any{map[string]any{"name": "PixelArtTexture", "sampler": 0, "source": 0}}
+		doc["samplers"] = []any{map[string]any{"magFilter": 9728, "minFilter": 9728}}
+		doc["images"] = []any{map[string]any{"name": imageName, "bufferView": imageView, "mimeType": "image/png"}}
 	}
 	jsonBytes, err := json.Marshal(doc)
 	if err != nil {
