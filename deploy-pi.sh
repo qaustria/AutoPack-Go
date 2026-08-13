@@ -84,7 +84,7 @@ while [ "$i" -lt 20 ]; do
     if health=$(curl -fsS http://127.0.0.1:8080/healthz 2>/dev/null); then
         printf '%s\n' "$health"
         case "$health" in
-            *'"version":"1.4.7"'*) break ;;
+            *'"version":"1.4.8"'*) break ;;
         esac
     fi
     i=$((i + 1))
@@ -92,7 +92,7 @@ while [ "$i" -lt 20 ]; do
 done
 
 if [ "$i" -ge 20 ]; then
-    echo "Cone started, but its private healthz did not report version 1.4.7." >&2
+    echo "Cone started, but its private healthz did not report version 1.4.8." >&2
     journalctl -u cone -n 30 --no-pager >&2 || true
     exit 1
 fi
@@ -102,12 +102,12 @@ systemctl restart nginx
 health=$(curl -fsS -H 'Host: qstr.xyz' http://127.0.0.1/healthz)
 printf '%s\n' "$health"
 case "$health" in
-    *'"version":"1.4.7"'*) ;;
+    *'"version":"1.4.8"'*) ;;
     *)
-        echo "nginx is running, but the proxied healthz did not report version 1.4.7." >&2
+        echo "nginx is running, but the proxied healthz did not report version 1.4.8." >&2
         journalctl -u nginx -n 30 --no-pager >&2 || true
         exit 1
         ;;
 esac
 
-echo "Cone 1.4.7 is running through nginx on localhost:80."
+echo "Cone 1.4.8 is running through nginx on localhost:80."

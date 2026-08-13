@@ -84,6 +84,8 @@ cells must contain their complete `https://...` URL. `ROBLOX_API_KEY` and
 `ROBLOX_USER_ID` select the Roblox account used for the import. The command
 defaults to `http://127.0.0.1:8080/api/convert`; override that with
 `CONE_BATCH_ENDPOINT` only when the trusted Cone service is elsewhere.
+MediaFire file pages are resolved to their ZIP downloads automatically. A
+MediaFire folder row recursively queues the ZIP files in that folder tree.
 
 Progress is checkpointed in `data/batch-queue.json`, so rerunning the command
 skips completed links and retries unfinished ones. Returned JSON is also copied

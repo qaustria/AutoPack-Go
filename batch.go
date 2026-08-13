@@ -31,6 +31,8 @@ const (
 	defaultBatchStatePath       = "data/batch-queue.json"
 	defaultBatchOutputDir       = "batch-output"
 	maxBatchSheetBytes    int64 = 10 << 20
+	maxBatchLandingBytes        = 4 << 20
+	maxBatchQueueEntries        = 2000
 )
 
 var batchURLPattern = regexp.MustCompile(`https?://[^\s"'<>]+`)
@@ -124,6 +126,13 @@ func runBatch(ctx context.Context, args []string) error {
 			fmt.Printf("[%d/%d] FAILED %s: %v\n", index+1, len(queue), entry.Name, err)
 			continue
 		}
+		expectedPackID, err := texturePackID(zipPath)
+		if err != nil {
+			_ = os.Remove(zipPath)
+			failed++
+			fmt.Printf("[%d/%d] FAILED %s: %v\n", index+1, len(queue), entry.Name, err)
+			continue
+		}
 		result, err := submitBatchPackWhenAvailable(ctx, client, endpoint, credentials, zipPath, filename, func(progress ProgressEvent) {
 			message := progress.Message
 			if message == "" {
@@ -144,6 +153,14 @@ func runBatch(ctx context.Context, args []string) error {
 			failed++
 			fmt.Printf("[%d/%d] FAILED %s: %v\n", index+1, len(queue), entry.Name, err)
 			continue
+		}
+		if result.PackID == "" {
+			// Cone 1.4.5 and earlier did not include the Pack ID in the final
+			// stream event. It is the first eight bytes of the ZIP SHA-256, so
+			// the batch client can recover it without changing the result.
+			result.PackID = expectedPackID
+		} else if result.PackID != expectedPackID {
+			return fmt.Errorf("Cone returned Pack ID %s for ZIP %s", result.PackID, expectedPackID)
 		}
 		outputPath := filepath.Join(outputDir, batchOutputFilename(filename, result.PackID))
 		if err := os.WriteFile(outputPath, append(result.Result, '\n'), 0o640); err != nil {
@@ -293,7 +310,7 @@ func submitBatchPack(ctx context.Context, client *http.Client, endpoint string, 
 	if err := <-writeDone; err != nil {
 		return batchSubmitResult{}, fmt.Errorf("stream queued pack: %w", err)
 	}
-	if result.PackID == "" || len(result.Result) == 0 {
+	if len(result.Result) == 0 {
 		return batchSubmitResult{}, errors.New("Cone finished without a batch result")
 	}
 	return result, nil
@@ -329,7 +346,7 @@ func loadBatchQueue(ctx context.Context, source string, client *http.Client) ([]
 	if err != nil {
 		return nil, fmt.Errorf("read batch CSV: %w", err)
 	}
-	return parseBatchRecords(records), nil
+	return expandBatchQueue(ctx, client, parseBatchRecords(records)), nil
 }
 
 func openBatchCSV(ctx context.Context, source string, client *http.Client) (io.Reader, func(), error) {
@@ -375,7 +392,171 @@ func googleSheetCSVURL(source string) (string, bool) {
 	if gid == "" {
 		gid = "0"
 	}
-	return "https://docs.google.com/spreadsheets/d/" + url.PathEscape(parts[2]) + "/export?format=csv&gid=" + url.QueryEscape(gid), true
+	return "https://docs.google.com/spreadsheets/d/" + url.PathEscape(parts[2]) + "/gviz/tq?tqx=out:csv&gid=" + url.QueryEscape(gid), true
+}
+
+func expandBatchQueue(ctx context.Context, client *http.Client, queue []batchQueueEntry) []batchQueueEntry {
+	expanded := make([]batchQueueEntry, 0, len(queue))
+	for _, entry := range queue {
+		folderKey, isFolder := mediaFireFolderKey(entry.Source)
+		if !isFolder {
+			expanded = append(expanded, entry)
+			continue
+		}
+		fmt.Printf("EXPAND %s (MediaFire folder)\n", entry.Name)
+		files, err := listMediaFireFolderFiles(ctx, client, folderKey, entry.Row)
+		if err != nil {
+			fmt.Printf("SKIP %s: %v\n", entry.Name, err)
+			continue
+		}
+		fmt.Printf("EXPANDED %s: %d ZIP files\n", entry.Name, len(files))
+		expanded = append(expanded, files...)
+		if len(expanded) >= maxBatchQueueEntries {
+			fmt.Printf("Queue reached its %d-pack safety limit; remaining links were ignored\n", maxBatchQueueEntries)
+			break
+		}
+	}
+
+	seen := make(map[string]struct{}, len(expanded))
+	deduplicated := expanded[:0]
+	for _, entry := range expanded {
+		identity := batchSourceIdentity(entry.Source)
+		if _, exists := seen[identity]; exists {
+			continue
+		}
+		seen[identity] = struct{}{}
+		deduplicated = append(deduplicated, entry)
+		if len(deduplicated) == maxBatchQueueEntries {
+			break
+		}
+	}
+	return deduplicated
+}
+
+type mediaFireContentResponse struct {
+	Response struct {
+		Result        string `json:"result"`
+		Message       string `json:"message"`
+		FolderContent struct {
+			MoreChunks string `json:"more_chunks"`
+			Files      []struct {
+				Filename string `json:"filename"`
+				MIMEType string `json:"mimetype"`
+				Links    struct {
+					NormalDownload string `json:"normal_download"`
+				} `json:"links"`
+			} `json:"files"`
+			Folders []struct {
+				FolderKey string `json:"folderkey"`
+			} `json:"folders"`
+		} `json:"folder_content"`
+	} `json:"response"`
+}
+
+func listMediaFireFolderFiles(ctx context.Context, client *http.Client, rootKey string, row int) ([]batchQueueEntry, error) {
+	folders := []string{rootKey}
+	seenFolders := make(map[string]struct{})
+	var files []batchQueueEntry
+	for len(folders) != 0 {
+		folderKey := folders[0]
+		folders = folders[1:]
+		if _, exists := seenFolders[folderKey]; exists {
+			continue
+		}
+		seenFolders[folderKey] = struct{}{}
+		if len(seenFolders) > 500 {
+			return nil, errors.New("MediaFire folder tree exceeds the 500-folder safety limit")
+		}
+
+		for chunk := 1; ; chunk++ {
+			content, err := fetchMediaFireFolderContent(ctx, client, folderKey, "files", chunk)
+			if err != nil {
+				return nil, err
+			}
+			for _, file := range content.Response.FolderContent.Files {
+				if !strings.EqualFold(filepath.Ext(file.Filename), ".zip") || file.Links.NormalDownload == "" {
+					continue
+				}
+				files = append(files, batchQueueEntry{Row: row, Name: file.Filename, Source: file.Links.NormalDownload})
+				if len(files) >= maxBatchQueueEntries {
+					return files, nil
+				}
+			}
+			if !strings.EqualFold(content.Response.FolderContent.MoreChunks, "yes") {
+				break
+			}
+		}
+
+		for chunk := 1; ; chunk++ {
+			content, err := fetchMediaFireFolderContent(ctx, client, folderKey, "folders", chunk)
+			if err != nil {
+				return nil, err
+			}
+			for _, folder := range content.Response.FolderContent.Folders {
+				if folder.FolderKey != "" {
+					folders = append(folders, folder.FolderKey)
+				}
+			}
+			if !strings.EqualFold(content.Response.FolderContent.MoreChunks, "yes") {
+				break
+			}
+		}
+	}
+	return files, nil
+}
+
+func fetchMediaFireFolderContent(ctx context.Context, client *http.Client, folderKey, contentType string, chunk int) (mediaFireContentResponse, error) {
+	query := url.Values{
+		"folder_key":      {folderKey},
+		"content_type":    {contentType},
+		"response_format": {"json"},
+		"chunk":           {strconv.Itoa(chunk)},
+	}
+	target := "https://www.mediafire.com/api/1.5/folder/get_content.php?" + query.Encode()
+	response, err := batchGET(ctx, client, target)
+	if err != nil {
+		return mediaFireContentResponse{}, fmt.Errorf("list MediaFire folder %s: %w", folderKey, err)
+	}
+	defer response.Body.Close()
+	var content mediaFireContentResponse
+	decoder := json.NewDecoder(io.LimitReader(response.Body, maxBatchSheetBytes+1))
+	if err := decoder.Decode(&content); err != nil {
+		return content, fmt.Errorf("decode MediaFire folder %s: %w", folderKey, err)
+	}
+	if !strings.EqualFold(content.Response.Result, "Success") {
+		message := strings.TrimSpace(content.Response.Message)
+		if message == "" {
+			message = "unknown MediaFire API error"
+		}
+		return content, fmt.Errorf("list MediaFire folder %s: %s", folderKey, message)
+	}
+	return content, nil
+}
+
+func mediaFireFolderKey(source string) (string, bool) {
+	parsed, err := url.Parse(source)
+	if err != nil || (!strings.EqualFold(parsed.Hostname(), "www.mediafire.com") && !strings.EqualFold(parsed.Hostname(), "mediafire.com")) {
+		return "", false
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) < 2 || parts[0] != "folder" || parts[1] == "" {
+		return "", false
+	}
+	return parts[1], true
+}
+
+func batchSourceIdentity(source string) string {
+	parsed, err := url.Parse(source)
+	if err != nil {
+		return source
+	}
+	host := strings.ToLower(parsed.Hostname())
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if (host == "www.mediafire.com" || host == "mediafire.com") && len(parts) >= 3 && parts[0] == "file" {
+		return "mediafire:file:" + parts[1]
+	}
+	parsed.Fragment = ""
+	return parsed.String()
 }
 
 func parseBatchRecords(records [][]string) []batchQueueEntry {
@@ -423,7 +604,7 @@ func parseBatchRecords(records [][]string) []batchQueueEntry {
 
 func downloadBatchPack(ctx context.Context, client *http.Client, entry batchQueueEntry) (string, string, error) {
 	source := normalizeBatchDownloadURL(entry.Source)
-	response, err := batchGET(ctx, client, source)
+	response, err := openBatchDownload(ctx, client, source)
 	if err != nil {
 		return "", "", err
 	}
@@ -462,6 +643,47 @@ func downloadBatchPack(ctx context.Context, client *http.Client, entry batchQueu
 		return "", "", errors.New("downloaded file is not a ZIP; the sheet may contain a landing-page link")
 	}
 	return path, filename, nil
+}
+
+func openBatchDownload(ctx context.Context, client *http.Client, source string) (*http.Response, error) {
+	response, err := batchGET(ctx, client, source)
+	if err != nil {
+		return nil, err
+	}
+	contentType := strings.ToLower(response.Header.Get("Content-Type"))
+	parsed, _ := url.Parse(source)
+	isMediaFire := parsed != nil && strings.HasSuffix(strings.ToLower(parsed.Hostname()), "mediafire.com")
+	if !isMediaFire || !strings.Contains(contentType, "text/html") {
+		return response, nil
+	}
+	page, readErr := io.ReadAll(io.LimitReader(response.Body, maxBatchLandingBytes+1))
+	_ = response.Body.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("read MediaFire download page: %w", readErr)
+	}
+	if len(page) > maxBatchLandingBytes {
+		return nil, errors.New("MediaFire download page exceeds the safety limit")
+	}
+	directURL := mediaFireDirectDownloadURL(page)
+	if directURL == "" {
+		return nil, errors.New("MediaFire page does not contain a working direct-download link")
+	}
+	return batchGET(ctx, client, directURL)
+}
+
+func mediaFireDirectDownloadURL(page []byte) string {
+	for _, match := range batchURLPattern.FindAllString(string(page), -1) {
+		match = html.UnescapeString(strings.TrimRight(match, "\\).,;]}"))
+		parsed, err := url.Parse(match)
+		if err != nil {
+			continue
+		}
+		host := strings.ToLower(parsed.Hostname())
+		if strings.HasPrefix(host, "download") && strings.HasSuffix(host, ".mediafire.com") {
+			return parsed.String()
+		}
+	}
+	return ""
 }
 
 func normalizeBatchDownloadURL(source string) string {

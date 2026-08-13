@@ -21,7 +21,7 @@ func TestGoogleSheetCSVURL(t *testing.T) {
 	if !ok {
 		t.Fatal("Google Sheet URL was not recognized")
 	}
-	want := "https://docs.google.com/spreadsheets/d/sheet-id/export?format=csv&gid=123"
+	want := "https://docs.google.com/spreadsheets/d/sheet-id/gviz/tq?tqx=out:csv&gid=123"
 	if got != want {
 		t.Fatalf("CSV URL = %q, want %q", got, want)
 	}
@@ -46,8 +46,37 @@ func TestParseBatchRecordsUsesNamesAndDeduplicatesLinks(t *testing.T) {
 	}
 }
 
+func TestMediaFireDirectDownloadURL(t *testing.T) {
+	page := []byte(`<a id="downloadButton" href="https://download123.mediafire.com/token/file/pack.zip?x=1&amp;y=2">Download</a>`)
+	got := mediaFireDirectDownloadURL(page)
+	want := "https://download123.mediafire.com/token/file/pack.zip?x=1&y=2"
+	if got != want {
+		t.Fatalf("direct MediaFire URL = %q, want %q", got, want)
+	}
+}
+
+func TestMediaFireFolderKeyAndSourceIdentity(t *testing.T) {
+	key, ok := mediaFireFolderKey("https://www.mediafire.com/folder/abc123/packs#myfiles")
+	if !ok || key != "abc123" {
+		t.Fatalf("folder key = %q, ok=%v", key, ok)
+	}
+	first := batchSourceIdentity("https://www.mediafire.com/file/quickkey/one.zip/file")
+	second := batchSourceIdentity("https://www.mediafire.com/file/quickkey/two.zip/file")
+	if first != second {
+		t.Fatalf("same MediaFire quickkey identities differ: %q != %q", first, second)
+	}
+}
+
 func TestRunBatchQueuesSequentiallyAndResumes(t *testing.T) {
 	zipBytes := testBatchZIP(t)
+	zipPath := filepath.Join(t.TempDir(), "pack.zip")
+	if err := os.WriteFile(zipPath, zipBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expectedPackID, err := texturePackID(zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var baseURL string
 	var requests atomic.Int32
 	var active atomic.Int32
@@ -86,7 +115,7 @@ func TestRunBatchQueuesSequentiallyAndResumes(t *testing.T) {
 			requestNumber := requests.Add(1)
 			response.Header().Set("Content-Type", "application/x-ndjson")
 			_, _ = fmt.Fprintf(response, "{\"type\":\"progress\",\"progress\":{\"message\":\"Porting %d\"}}\n", requestNumber)
-			_, _ = fmt.Fprintf(response, "{\"type\":\"result\",\"packId\":\"pack-%d\",\"result\":{\"m\":null,\"t\":\"buffer\",\"zbase64\":\"data-%d\"}}\n", requestNumber, requestNumber)
+			_, _ = fmt.Fprintf(response, "{\"type\":\"result\",\"packId\":%q,\"result\":{\"m\":null,\"t\":\"buffer\",\"zbase64\":\"data-%d\"}}\n", expectedPackID, requestNumber)
 		default:
 			http.NotFound(response, request)
 		}
