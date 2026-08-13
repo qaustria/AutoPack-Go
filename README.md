@@ -12,7 +12,9 @@ Cone ports Minecraft 1.8.9 texture packs to Roblox. It finds supported item and 
 - Normal VP images plus edge-expanded texture variants.
 - GLB model import with resolution to Roblox `MeshPart.MeshId` assets.
 - Responsive local/public web interface with streamed conversion logs.
+- Durable bbolt history for every successful port, indexed by Pack ID.
 - Reusable image, mesh, GLB, texture-pack, and upload helpers in `utils`.
+- Reusable port-history helpers in `packstore`.
 
 ## Requirements
 
@@ -38,6 +40,14 @@ AUTOPACK_ADDR=0.0.0.0:8080 go run . --web
 ```
 
 Use HTTPS whenever the interface is reachable over a network.
+
+Successful web ports are appended to `data/cone.db`. Set
+`CONE_DATABASE_PATH` to place the database elsewhere. Cone stores the Pack ID,
+original filename, timestamp, and compressed output JSON; it does not store the
+uploaded ZIP, Roblox API key, or preview image.
+
+Cone listens directly with Go's HTTP server. nginx is optional; a reverse proxy
+or Cloudflare Tunnel can point straight to `http://127.0.0.1:8080`.
 
 ## Run from the command line
 
@@ -71,7 +81,7 @@ func build(img image.Image) ([]byte, error) {
 }
 ```
 
-`utils.EdgeExpand`, `utils.EncodeGLB`, `utils.UnzipTexturePack`, and `utils.NewAssetUploader` are also available for custom pipelines.
+`utils.EdgeExpand`, `utils.EncodeGLB`, `utils.UnzipTexturePack`, and `utils.NewAssetUploader` are also available for custom pipelines. The `packstore` package can open, save, count, and retrieve port-history records.
 
 ## Verify changes
 

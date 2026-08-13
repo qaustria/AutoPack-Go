@@ -11,7 +11,7 @@ import (
 
 const (
 	// Version identifies the AutoPack library in generated GLB metadata.
-	Version = "1.4.3"
+	Version = "1.4.4"
 
 	glbMagic       = 0x46546c67
 	glbVersion     = 2

@@ -157,8 +157,8 @@ func TestRunPipelineBuildsSchemaAndDeduplicatesSharedMeshes(t *testing.T) {
 		t.Fatal(err)
 	}
 	notificationContent := string(notificationJSON)
-	if len(notificationContent) > discordMessageLimit {
-		t.Fatalf("compressed full template does not fit in Discord: %d characters", len(notificationContent))
+	if len(notificationContent) > discordComponentTextLimit {
+		t.Fatalf("compressed full template does not fit in a Discord component: %d characters", len(notificationContent))
 	}
 	// Every prepared upload lives under the extracted temporary directory and
 	// must be gone when RunPipeline returns.

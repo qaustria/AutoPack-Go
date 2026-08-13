@@ -8,9 +8,12 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/qaustria/AutoPack-Go/packstore"
 )
 
 type stubWebProcessor struct {
@@ -122,6 +125,12 @@ func TestWebHandlerServesFrontendWithSecurityHeaders(t *testing.T) {
 			t.Fatalf("GET %s = %d %q", path, stateResponse.Code, stateResponse.Header().Get("Content-Type"))
 		}
 	}
+	fontRequest := httptest.NewRequest(http.MethodGet, "/fonts/inter-var.woff2", nil)
+	fontResponse := httptest.NewRecorder()
+	handler.ServeHTTP(fontResponse, fontRequest)
+	if fontResponse.Code != http.StatusOK || !strings.Contains(fontResponse.Header().Get("Content-Type"), "font/woff2") {
+		t.Fatalf("GET font = %d %q", fontResponse.Code, fontResponse.Header().Get("Content-Type"))
+	}
 }
 
 func TestWebHandlerStreamsProgressAndJSONResult(t *testing.T) {
@@ -184,11 +193,16 @@ func TestCredentialWebHandlerUsesOnlyRequestCredentials(t *testing.T) {
 	processor := &stubWebProcessor{}
 	captured := &capturedCredentials{}
 	notifier := &stubPortNotifier{}
-	handler, err := NewCredentialWebHandlerWithNotifier(func(_ context.Context, apiKey, userID string) (uploadProcessor, error) {
+	store, err := packstore.Open(filepath.Join(t.TempDir(), "cone.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	handler, err := NewCredentialWebHandlerWithServices(func(_ context.Context, apiKey, userID string) (uploadProcessor, error) {
 		captured.apiKey = apiKey
 		captured.userID = userID
 		return processor, nil
-	}, notifier)
+	}, notifier, store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,6 +239,10 @@ func TestCredentialWebHandlerUsesOnlyRequestCredentials(t *testing.T) {
 	}
 	if decoded["SwordMesh"] != "123" {
 		t.Fatalf("webhook output JSON = %#v", decoded)
+	}
+	record, found, err := store.Latest(context.Background(), "0123456789abcdef")
+	if err != nil || !found || record.PackName != "public.zip" || string(record.OutputJSON) != string(notifier.notification.OutputJSON) {
+		t.Fatalf("stored port = %#v, found=%v, err=%v", record, found, err)
 	}
 }
 

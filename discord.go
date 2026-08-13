@@ -14,7 +14,11 @@ import (
 	"time"
 )
 
-const discordMessageLimit = 2000
+const (
+	discordComponentTextLimit = 4000
+	discordComponentsV2Flag   = 1 << 15
+	discordAccentOrange       = 16742144
+)
 
 type PortNotification struct {
 	PackID     string
@@ -41,8 +45,11 @@ func NewDiscordNotifier(webhookURL string) (*DiscordNotifier, error) {
 	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
 		return nil, errors.New("Discord webhook URL is invalid")
 	}
+	query := parsed.Query()
+	query.Set("with_components", "true")
+	parsed.RawQuery = query.Encode()
 	return &DiscordNotifier{
-		webhookURL: webhookURL,
+		webhookURL: parsed.String(),
 		client:     &http.Client{Timeout: 15 * time.Second},
 	}, nil
 }
@@ -57,12 +64,9 @@ func (notifier *DiscordNotifier) Notify(ctx context.Context, notification PortNo
 	if notification.PackID == "" || len(notification.OutputJSON) == 0 || len(notification.PreviewPNG) == 0 {
 		return errors.New("Discord notification is incomplete")
 	}
-	// Keep the message body to the one value users paste into the game. The
-	// pack ID is rendered into the attached preview instead of consuming part
-	// of Discord's strict 2,000-character message allowance.
-	content := string(notification.OutputJSON)
-	if len(content) > discordMessageLimit {
-		return fmt.Errorf("compressed pack JSON is too large for one Discord message (%d characters)", len(content))
+	outputComponent := fmt.Sprintf(":tickets: **Pack ID**:\n`%s`\n:package: **Output JSON**: ```%s```", notification.PackID, notification.OutputJSON)
+	if len(outputComponent) > discordComponentTextLimit {
+		return fmt.Errorf("compressed pack JSON is too large for one Discord component (%d characters)", len(outputComponent))
 	}
 	previewPNG, err := addPackIDToPreview(notification.PreviewPNG, notification.PackID)
 	if err != nil {
@@ -71,11 +75,29 @@ func (notifier *DiscordNotifier) Notify(ctx context.Context, notification PortNo
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
+	previewFilename := "cone-hotbar-" + notification.PackID + ".png"
 	payload, err := json.Marshal(map[string]any{
-		"content": content,
+		"flags": discordComponentsV2Flag,
 		"allowed_mentions": map[string]any{
 			"parse": []string{},
 		},
+		"attachments": []any{map[string]any{
+			"id": 0, "filename": previewFilename, "description": "Cone texture-pack hotbar preview",
+		}},
+		"components": []any{map[string]any{
+			"type": 17,
+			"components": []any{
+				map[string]any{"type": 10, "content": "## :orange_circle: Cone Website Logs \n**Texturepack ported succesfully.**\n"},
+				map[string]any{"type": 14, "spacing": 1},
+				map[string]any{"type": 10, "content": outputComponent},
+				map[string]any{"type": 14},
+				map[string]any{"type": 10, "content": ":frame_photo: **Texturepack Preview:**"},
+				map[string]any{"type": 12, "items": []any{map[string]any{
+					"media": map[string]any{"url": "attachment://" + previewFilename},
+				}}},
+			},
+			"accent_color": discordAccentOrange,
+		}},
 	})
 	if err != nil {
 		return fmt.Errorf("encode Discord webhook payload: %w", err)
@@ -87,7 +109,7 @@ func (notifier *DiscordNotifier) Notify(ctx context.Context, notification PortNo
 	if _, err := payloadPart.Write(payload); err != nil {
 		return fmt.Errorf("write Discord payload: %w", err)
 	}
-	previewPart, err := writer.CreateFormFile("files[0]", "cone-hotbar-"+notification.PackID+".png")
+	previewPart, err := writer.CreateFormFile("files[0]", previewFilename)
 	if err != nil {
 		return fmt.Errorf("create Discord preview attachment: %w", err)
 	}

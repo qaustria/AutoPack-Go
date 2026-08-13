@@ -21,21 +21,60 @@ func TestDiscordNotifierSendsMessageAndHotbarPreview(t *testing.T) {
 		if request.Method != http.MethodPost {
 			t.Errorf("webhook method = %s", request.Method)
 		}
+		if request.URL.Query().Get("with_components") != "true" {
+			t.Errorf("webhook did not enable components: %s", request.URL.RawQuery)
+		}
 		if err := request.ParseMultipartForm(1 << 20); err != nil {
 			t.Errorf("parse webhook multipart: %v", err)
 			http.Error(response, "bad multipart", http.StatusBadRequest)
 			return
 		}
 		var payload struct {
-			Content         string `json:"content"`
+			Flags           int `json:"flags"`
 			AllowedMentions struct {
 				Parse []string `json:"parse"`
 			} `json:"allowed_mentions"`
+			Attachments []struct {
+				ID       int    `json:"id"`
+				Filename string `json:"filename"`
+			} `json:"attachments"`
+			Components []struct {
+				Type        int `json:"type"`
+				AccentColor int `json:"accent_color"`
+				Components  []struct {
+					Type    int    `json:"type"`
+					Content string `json:"content"`
+					Items   []struct {
+						Media struct {
+							URL string `json:"url"`
+						} `json:"media"`
+					} `json:"items"`
+				} `json:"components"`
+			} `json:"components"`
 		}
 		if err := json.Unmarshal([]byte(request.FormValue("payload_json")), &payload); err != nil {
 			t.Errorf("decode webhook payload: %v", err)
 		}
-		gotContent = payload.Content
+		if payload.Flags != discordComponentsV2Flag || len(payload.Components) != 1 || payload.Components[0].Type != 17 || payload.Components[0].AccentColor != discordAccentOrange {
+			t.Errorf("unexpected Components V2 payload: %#v", payload)
+		}
+		if len(payload.Attachments) != 1 || payload.Attachments[0].ID != 0 {
+			t.Errorf("unexpected attachment metadata: %#v", payload.Attachments)
+		}
+		children := payload.Components[0].Components
+		wantTypes := []int{10, 14, 10, 14, 10, 12}
+		if len(children) != len(wantTypes) {
+			t.Errorf("container child count = %d, want %d", len(children), len(wantTypes))
+		}
+		for index, component := range children {
+			if index < len(wantTypes) && component.Type != wantTypes[index] {
+				t.Errorf("container child %d type = %d, want %d", index, component.Type, wantTypes[index])
+			}
+			gotContent += component.Content
+			if component.Type == 12 && (len(component.Items) != 1 || component.Items[0].Media.URL != "attachment://"+payload.Attachments[0].Filename) {
+				t.Errorf("media gallery does not reference its attachment: %#v", component.Items)
+			}
+		}
 		if len(payload.AllowedMentions.Parse) != 0 {
 			t.Errorf("webhook allows mentions: %#v", payload.AllowedMentions.Parse)
 		}
@@ -71,8 +110,8 @@ func TestDiscordNotifierSendsMessageAndHotbarPreview(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if gotContent != string(output) {
-		t.Fatalf("webhook content = %q, want only %q", gotContent, output)
+	if !strings.Contains(gotContent, "Cone Website Logs") || !strings.Contains(gotContent, "0123456789abcdef") || !strings.Contains(gotContent, string(output)) {
+		t.Fatalf("webhook components omit required content: %q", gotContent)
 	}
 	labeledPreview, err := png.Decode(bytes.NewReader(gotPreview))
 	if err != nil {
@@ -89,7 +128,7 @@ func TestDiscordNotifierRejectsOversizedMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = notifier.Notify(context.Background(), PortNotification{
-		PackID: "pack", OutputJSON: []byte(strings.Repeat("x", discordMessageLimit+1)), PreviewPNG: []byte("png"),
+		PackID: "pack", OutputJSON: []byte(strings.Repeat("x", discordComponentTextLimit+1)), PreviewPNG: []byte("png"),
 	})
 	if err == nil || !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("oversized message error = %v", err)

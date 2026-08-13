@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/qaustria/AutoPack-Go/packstore"
 	"github.com/qaustria/AutoPack-Go/utils"
 )
 
@@ -140,7 +141,16 @@ func runWeb(ctx context.Context) error {
 			return err
 		}
 	}
-	handler, err := NewCredentialWebHandlerWithNotifier(newWebRequestProcessor, notifier)
+	databasePath := strings.TrimSpace(os.Getenv("CONE_DATABASE_PATH"))
+	if databasePath == "" {
+		databasePath = filepath.Join("data", "cone.db")
+	}
+	store, err := packstore.Open(databasePath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	handler, err := NewCredentialWebHandlerWithServices(newWebRequestProcessor, notifier, store)
 	if err != nil {
 		return err
 	}
@@ -164,6 +174,7 @@ func runWeb(ctx context.Context) error {
 	} else {
 		fmt.Println("Discord notifications: enabled")
 	}
+	fmt.Println("Port history database:", store.Path())
 	fmt.Println("Press Ctrl+C to stop.")
 	select {
 	case err := <-result:

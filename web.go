@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/qaustria/AutoPack-Go/packstore"
 	"github.com/qaustria/AutoPack-Go/utils"
 )
 
@@ -37,6 +38,7 @@ type webHandler struct {
 	processor        uploadProcessor
 	processorFactory requestProcessorFactory
 	notifier         PortNotifier
+	packStore        *packstore.Store
 	static           http.Handler
 	activeJobsMu     sync.Mutex
 	activeJobs       map[[sha256.Size]byte]struct{}
@@ -71,6 +73,12 @@ func NewCredentialWebHandler(factory requestProcessorFactory) (http.Handler, err
 }
 
 func NewCredentialWebHandlerWithNotifier(factory requestProcessorFactory, notifier PortNotifier) (http.Handler, error) {
+	return NewCredentialWebHandlerWithServices(factory, notifier, nil)
+}
+
+// NewCredentialWebHandlerWithServices creates a public handler with optional
+// Discord notification and durable successful-port history.
+func NewCredentialWebHandlerWithServices(factory requestProcessorFactory, notifier PortNotifier, store *packstore.Store) (http.Handler, error) {
 	if factory == nil {
 		return nil, errors.New("web request processor factory is nil")
 	}
@@ -81,6 +89,7 @@ func NewCredentialWebHandlerWithNotifier(factory requestProcessorFactory, notifi
 	handler := newWebHandler(assets)
 	handler.processorFactory = factory
 	handler.notifier = notifier
+	handler.packStore = store
 	return handler.routes(), nil
 }
 
@@ -178,11 +187,27 @@ func (h *webHandler) convert(response http.ResponseWriter, request *http.Request
 		writeEvent(webStreamEvent{Type: "error", Message: err.Error()})
 		return
 	}
+	if h.packStore != nil {
+		// Once Roblox has completed a port, retain its record even if the browser
+		// closes before the response stream finishes.
+		storeContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		record, storeErr := h.packStore.Save(storeContext, packstore.Record{
+			PackID: result.PackID, PackName: result.PackName, OutputJSON: outputJSON,
+		})
+		cancel()
+		if storeErr != nil {
+			writeEvent(webStreamEvent{Type: "error", Message: "save port history: " + storeErr.Error()})
+			return
+		}
+		writeEvent(webStreamEvent{Type: "progress", Progress: &ProgressEvent{
+			Stage: ProgressNotifying, Message: fmt.Sprintf("Saved Pack ID %s as port #%d", result.PackID, record.Sequence),
+		}})
+	}
 	notificationEvent := ProgressEvent{Stage: ProgressNotifying}
 	if h.notifier == nil {
 		notificationEvent.Message = "Discord webhook not configured; skipped notification"
 	} else {
-		notifyContext, cancel := context.WithTimeout(request.Context(), 20*time.Second)
+		notifyContext, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		notifyErr := h.notifier.Notify(notifyContext, PortNotification{
 			PackID: result.PackID, PackName: result.PackName,
 			OutputJSON: outputJSON, PreviewPNG: result.PreviewPNG,
