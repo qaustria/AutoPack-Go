@@ -76,3 +76,35 @@ func TestResizeTexturePreservesNearTransparentPixels(t *testing.T) {
 		t.Fatalf("visible texture pixel = %v", got)
 	}
 }
+
+func TestRemoveBackgroundAlphaNoiseOnlyCleansBrokenCanvas(t *testing.T) {
+	broken := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			broken.SetNRGBA(x, y, color.NRGBA{R: 230, G: 240, B: 250, A: 4})
+		}
+	}
+	broken.SetNRGBA(8, 8, color.NRGBA{R: 12, G: 34, B: 56, A: 255})
+	if threshold := RemoveBackgroundAlphaNoise(broken); threshold != 4 {
+		t.Fatalf("broken canvas threshold = %d, want 4", threshold)
+	}
+	if got := broken.NRGBAAt(0, 0); got != (color.NRGBA{}) {
+		t.Fatalf("broken canvas background = %v, want transparent", got)
+	}
+	if got := broken.NRGBAAt(8, 8); got != (color.NRGBA{R: 12, G: 34, B: 56, A: 255}) {
+		t.Fatalf("real item pixel changed: %v", got)
+	}
+
+	normal := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	normal.SetNRGBA(7, 7, color.NRGBA{R: 100, A: 4})
+	normal.SetNRGBA(8, 7, color.NRGBA{R: 200, A: 255})
+	before := append([]byte(nil), normal.Pix...)
+	if threshold := RemoveBackgroundAlphaNoise(normal); threshold != 0 {
+		t.Fatalf("normal sprite threshold = %d, want 0", threshold)
+	}
+	for index := range before {
+		if normal.Pix[index] != before[index] {
+			t.Fatalf("normal sprite changed at byte %d", index)
+		}
+	}
+}

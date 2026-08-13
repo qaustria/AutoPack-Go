@@ -4,11 +4,13 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -37,6 +39,25 @@ func (u *fakeUploader) UploadMany(_ context.Context, requests []utils.UploadRequ
 type selectiveFailureUploader struct {
 	requests []utils.UploadRequest
 	failures map[string]string
+}
+
+type artifactCaptureUploader struct {
+	files map[string][]byte
+}
+
+func (u *artifactCaptureUploader) UploadMany(_ context.Context, requests []utils.UploadRequest) []utils.UploadResult {
+	u.files = make(map[string][]byte, len(requests))
+	results := make([]utils.UploadResult, len(requests))
+	for index, request := range requests {
+		data, err := os.ReadFile(request.FilePath)
+		if err != nil {
+			results[index] = utils.UploadResult{Request: request, Error: err.Error()}
+			continue
+		}
+		u.files[request.DisplayName] = data
+		results[index] = utils.UploadResult{Request: request, Asset: &utils.UploadedAsset{AssetID: fmt.Sprintf("%d", index+1)}}
+	}
+	return results
 }
 
 func (u *selectiveFailureUploader) UploadMany(_ context.Context, requests []utils.UploadRequest) []utils.UploadResult {
@@ -188,6 +209,59 @@ func TestRunPipelineSkipsFailedUploadsAndKeepsDefaults(t *testing.T) {
 	}
 }
 
+func TestRunPipelineRemovesCanvasWideAlphaNoiseFromUploadArtifacts(t *testing.T) {
+	zipPath := filepath.Join(t.TempDir(), "noisy-pack.zip")
+	files := completePackImages()
+	for _, name := range []string{"stone_sword", "diamond_sword", "iron_sword", "wood_sword"} {
+		files["Wrapper/assets/minecraft/textures/items/"+name+".png"] = noisyTestTexture(2)
+	}
+	writePackImages(t, zipPath, files)
+	uploader := &artifactCaptureUploader{}
+	if _, err := RunPipeline(context.Background(), zipPath, uploader, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	vp, err := png.Decode(bytes.NewReader(uploader.files["Cone diamond_sword VPImage"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lowAlpha := 0
+	transparent := 0
+	for y := vp.Bounds().Min.Y; y < vp.Bounds().Max.Y; y++ {
+		for x := vp.Bounds().Min.X; x < vp.Bounds().Max.X; x++ {
+			_, _, _, alpha16 := vp.At(x, y).RGBA()
+			alpha := int(alpha16 >> 8)
+			if alpha == 0 {
+				transparent++
+			} else if alpha <= 8 {
+				lowAlpha++
+			}
+		}
+	}
+	if lowAlpha != 0 || transparent == 0 {
+		t.Fatalf("uploaded sword VP background: transparent=%d low-alpha=%d", transparent, lowAlpha)
+	}
+	mesh := uploader.files["Cone sword mesh"]
+	if len(mesh) < 25 {
+		t.Fatalf("sword mesh is too short: %d", len(mesh))
+	}
+	vertices := int(binary.LittleEndian.Uint32(mesh[17:21]))
+	minU, maxU := float32(1), float32(0)
+	for vertex := 0; vertex < vertices; vertex++ {
+		offset := 25 + vertex*40 + 24
+		u := math.Float32frombits(binary.LittleEndian.Uint32(mesh[offset : offset+4]))
+		if u < minU {
+			minU = u
+		}
+		if u > maxU {
+			maxU = u
+		}
+	}
+	if minU <= 0 || maxU >= 1 {
+		t.Fatalf("sword mesh spans the full noisy canvas: U=%g..%g", minU, maxU)
+	}
+}
+
 func TestPipelineMeshesFaceNorthWithHalfTurnYaw(t *testing.T) {
 	bindings := pipelineMeshes()
 	wantZ := map[string]float64{
@@ -296,6 +370,10 @@ func TestRunPipelineReportsMissingTexturesBeforeUpload(t *testing.T) {
 
 func writeCompletePack(t *testing.T, path string) {
 	t.Helper()
+	writePackImages(t, path, completePackImages())
+}
+
+func completePackImages() map[string]image.Image {
 	files := make(map[string]image.Image)
 	items := []string{
 		"stone_sword", "diamond_sword", "iron_sword", "wood_sword",
@@ -314,7 +392,7 @@ func writeCompletePack(t *testing.T, path string) {
 	for _, name := range []string{"blue", "cyan", "green", "gray", "orange", "purple", "red", "white", "yellow"} {
 		files["Wrapper/assets/minecraft/textures/blocks/wool_colored_"+name+".png"] = testTexture(color.NRGBA{R: 160, G: 80, B: 40, A: 255})
 	}
-	writePackImages(t, path, files)
+	return files
 }
 
 func writePackImages(t *testing.T, path string, files map[string]image.Image) {
@@ -346,6 +424,21 @@ func testTexture(pixel color.NRGBA) image.Image {
 	for y := 3; y < 13; y++ {
 		for x := 5; x < 11; x++ {
 			img.SetNRGBA(x, y, pixel)
+		}
+	}
+	return img
+}
+
+func noisyTestTexture(backgroundAlpha uint8) image.Image {
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 240, G: 240, B: 240, A: backgroundAlpha})
+		}
+	}
+	for y := 3; y < 13; y++ {
+		for x := 5; x < 11; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 80, G: 20, B: 140, A: 255})
 		}
 	}
 	return img

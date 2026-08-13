@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -34,7 +36,8 @@ type webHandler struct {
 	processorFactory requestProcessorFactory
 	notifier         PortNotifier
 	static           http.Handler
-	jobSlot          chan struct{}
+	activeJobsMu     sync.Mutex
+	activeJobs       map[[sha256.Size]byte]struct{}
 }
 
 type webStreamEvent struct {
@@ -81,8 +84,8 @@ func NewCredentialWebHandlerWithNotifier(factory requestProcessorFactory, notifi
 
 func newWebHandler(assets fs.FS) *webHandler {
 	return &webHandler{
-		static:  http.FileServer(http.FS(assets)),
-		jobSlot: make(chan struct{}, 1),
+		static:     http.FileServer(http.FS(assets)),
+		activeJobs: make(map[[sha256.Size]byte]struct{}),
 	}
 }
 
@@ -110,17 +113,12 @@ func (h *webHandler) convert(response http.ResponseWriter, request *http.Request
 		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	select {
-	case h.jobSlot <- struct{}{}:
-		defer func() { <-h.jobSlot }()
-	default:
-		http.Error(response, "another texture pack is already being processed", http.StatusTooManyRequests)
-		return
-	}
 	processor := h.processor
+	jobKey := sha256.Sum256([]byte("cone-shared-web-processor"))
+	var apiKey, userID string
 	if h.processorFactory != nil {
-		apiKey := strings.TrimSpace(request.Header.Get(robloxAPIKeyHeader))
-		userID := strings.TrimSpace(request.Header.Get(robloxUserIDHeader))
+		apiKey = strings.TrimSpace(request.Header.Get(robloxAPIKeyHeader))
+		userID = strings.TrimSpace(request.Header.Get(robloxUserIDHeader))
 		if apiKey == "" || userID == "" {
 			http.Error(response, "Roblox API key and user ID are required", http.StatusBadRequest)
 			return
@@ -129,6 +127,14 @@ func (h *webHandler) convert(response http.ResponseWriter, request *http.Request
 			http.Error(response, "Roblox credentials are too long", http.StatusBadRequest)
 			return
 		}
+		jobKey = sha256.Sum256([]byte(apiKey))
+	}
+	if !h.reserveJob(jobKey) {
+		http.Error(response, "another texture pack is already being processed with this Roblox API key", http.StatusTooManyRequests)
+		return
+	}
+	defer h.releaseJob(jobKey)
+	if h.processorFactory != nil {
 		var err error
 		processor, err = h.processorFactory(request.Context(), apiKey, userID)
 		if err != nil {
@@ -191,6 +197,25 @@ func (h *webHandler) convert(response http.ResponseWriter, request *http.Request
 	writeEvent(webStreamEvent{
 		Type: "result", Result: &result, Filename: downloadFilename(filename),
 	})
+}
+
+// reserveJob rate-limits conversions per Roblox credential rather than per
+// Cone server. Only the SHA-256 digest is retained for the duration of a job;
+// the API key itself is never stored on the handler.
+func (h *webHandler) reserveJob(key [sha256.Size]byte) bool {
+	h.activeJobsMu.Lock()
+	defer h.activeJobsMu.Unlock()
+	if _, active := h.activeJobs[key]; active {
+		return false
+	}
+	h.activeJobs[key] = struct{}{}
+	return true
+}
+
+func (h *webHandler) releaseJob(key [sha256.Size]byte) {
+	h.activeJobsMu.Lock()
+	delete(h.activeJobs, key)
+	h.activeJobsMu.Unlock()
 }
 
 func texturePackPart(request *http.Request) (*multipart.Part, error) {

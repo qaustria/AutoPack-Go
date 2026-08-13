@@ -96,7 +96,7 @@ func TestAlphaThreshold(t *testing.T) {
 	}
 }
 
-func TestDetectMeshAlphaThresholdRejectsNoisyFullPlane(t *testing.T) {
+func TestDetectBackgroundAlphaNoiseThresholdRejectsNoisyFullPlane(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
 	for y := 0; y < 16; y++ {
 		for x := 0; x < 16; x++ {
@@ -109,7 +109,7 @@ func TestDetectMeshAlphaThresholdRejectsNoisyFullPlane(t *testing.T) {
 		}
 	}
 
-	threshold := DetectMeshAlphaThreshold(img)
+	threshold := DetectBackgroundAlphaNoiseThreshold(img)
 	if threshold != 4 {
 		t.Fatalf("detected alpha threshold = %d, want 4", threshold)
 	}
@@ -124,11 +124,11 @@ func TestDetectMeshAlphaThresholdRejectsNoisyFullPlane(t *testing.T) {
 	}
 }
 
-func TestDetectMeshAlphaThresholdPreservesNormalAntialiasing(t *testing.T) {
+func TestDetectBackgroundAlphaNoiseThresholdPreservesNormalAntialiasing(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
 	img.SetNRGBA(7, 7, color.NRGBA{A: 4})
 	img.SetNRGBA(8, 7, color.NRGBA{A: 255})
-	if threshold := DetectMeshAlphaThreshold(img); threshold != 0 {
+	if threshold := DetectBackgroundAlphaNoiseThreshold(img); threshold != 0 {
 		t.Fatalf("normal sprite threshold = %d, want 0", threshold)
 	}
 }

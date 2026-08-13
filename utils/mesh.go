@@ -33,11 +33,11 @@ func DefaultConfig() Config {
 
 const maxBackgroundNoiseAlpha = 8
 
-// DetectMeshAlphaThreshold detects the specific broken-export pattern where
+// DetectBackgroundAlphaNoiseThreshold detects the specific broken-export pattern where
 // nearly every image pixel has a tiny non-zero alpha value. It is intended for
-// geometry masks only: source texture pixels remain completely unchanged.
-// Normal sprites with genuinely transparent backgrounds return zero.
-func DetectMeshAlphaThreshold(img image.Image) int {
+// generated texture copies and geometry masks. Normal sprites with genuinely
+// transparent backgrounds return zero.
+func DetectBackgroundAlphaNoiseThreshold(img image.Image) int {
 	if img == nil {
 		return 0
 	}
@@ -68,6 +68,25 @@ func DetectMeshAlphaThreshold(img image.Image) int {
 	// artifact, not ordinary antialiasing around a normally transparent sprite.
 	if visible*100 < total*90 || lowAlpha*100 < total*10 {
 		return 0
+	}
+	return threshold
+}
+
+// RemoveBackgroundAlphaNoise clears only canvas-wide low-alpha exporter noise
+// from an already copied NRGBA texture. It returns the detected threshold, or
+// zero when the image is a normal sprite and was left byte-for-byte unchanged.
+func RemoveBackgroundAlphaNoise(img *image.NRGBA) int {
+	threshold := DetectBackgroundAlphaNoiseThreshold(img)
+	if threshold == 0 {
+		return 0
+	}
+	for offset := 0; offset+3 < len(img.Pix); offset += 4 {
+		if alpha := int(img.Pix[offset+3]); alpha > 0 && alpha <= threshold {
+			img.Pix[offset] = 0
+			img.Pix[offset+1] = 0
+			img.Pix[offset+2] = 0
+			img.Pix[offset+3] = 0
+		}
 	}
 	return threshold
 }

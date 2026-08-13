@@ -59,8 +59,9 @@ type preparedUpload struct {
 }
 
 type cachedTexture struct {
-	Resized  *image.NRGBA
-	Expanded *image.NRGBA
+	Resized             *image.NRGBA
+	Expanded            *image.NRGBA
+	AlphaNoiseThreshold int
 }
 
 // preparationConcurrency keeps every CPU core busy without allowing machines
@@ -400,11 +401,21 @@ func cachePipelineTextures(ctx context.Context, textures map[string]string, log 
 			return fmt.Errorf("close texture %q: %w", key, closeErr)
 		}
 		entries[index].Resized = utils.ResizeTexture(img)
+		entries[index].AlphaNoiseThreshold = utils.RemoveBackgroundAlphaNoise(entries[index].Resized)
 		return nil
 	}); err != nil {
 		return nil, err
 	}
 	logPipeline(log, fmt.Sprintf("Resized %d textures to 512x512", len(keys)))
+	var cleanedAlpha []string
+	for index, entry := range entries {
+		if entry.AlphaNoiseThreshold > 0 {
+			cleanedAlpha = append(cleanedAlpha, fmt.Sprintf("%s (alpha <= %d)", keys[index], entry.AlphaNoiseThreshold))
+		}
+	}
+	if len(cleanedAlpha) > 0 {
+		logPipeline(log, "Removed invalid transparent-background noise from "+strings.Join(cleanedAlpha, ", "))
+	}
 
 	// Expansion is the most expensive image operation. Run it on all cores only
 	// once per source and share the immutable result with PNG and GLB encoders.
@@ -459,9 +470,7 @@ func prepareMeshBinding(textures map[string]cachedTexture, binding meshBinding, 
 		images = append(images, textures[sourceKey].Resized)
 	}
 	union := unionAlpha(images)
-	meshConfig := binding.Config
-	meshConfig.AlphaThreshold = utils.DetectMeshAlphaThreshold(union)
-	mesh, _, err := utils.BuildGreedyMesh(union, meshConfig)
+	mesh, _, err := utils.BuildGreedyMesh(union, binding.Config)
 	if err != nil {
 		return preparedUpload{}, fmt.Errorf("build %s mesh: %w", binding.Name, err)
 	}

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 type stubWebProcessor struct {
@@ -24,6 +25,19 @@ type capturedCredentials struct {
 
 type stubPortNotifier struct {
 	notification PortNotification
+}
+
+type gatedWebProcessor struct {
+	started chan<- struct{}
+	release <-chan struct{}
+}
+
+func (processor *gatedWebProcessor) ProcessUpload(_ context.Context, _ string, _ io.Reader, _ ProgressFunc) (PipelineResult, error) {
+	processor.started <- struct{}{}
+	<-processor.release
+	return PipelineResult{
+		Values: map[string]any{"SwordMesh": "123"}, PackID: "pack", PackName: "pack.zip",
+	}, nil
 }
 
 func (notifier *stubPortNotifier) Notify(_ context.Context, notification PortNotification) error {
@@ -210,6 +224,105 @@ func TestCredentialWebHandlerRejectsMissingCredentials(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("missing-credential status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+}
+
+func TestCredentialWebHandlerLimitsJobsPerAPIKey(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	handler, err := NewCredentialWebHandler(func(_ context.Context, _, _ string) (uploadProcessor, error) {
+		return &gatedWebProcessor{started: started, release: release}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstResponse := httptest.NewRecorder()
+	firstRequest := credentialConvertRequest(t, "same-key")
+	firstDone := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(firstResponse, firstRequest)
+		close(firstDone)
+	}()
+	waitForJobStart(t, started)
+
+	secondResponse := httptest.NewRecorder()
+	handler.ServeHTTP(secondResponse, credentialConvertRequest(t, "same-key"))
+	if secondResponse.Code != http.StatusTooManyRequests || !strings.Contains(secondResponse.Body.String(), "with this Roblox API key") {
+		t.Fatalf("same-key concurrent response = %d %q", secondResponse.Code, secondResponse.Body.String())
+	}
+	close(release)
+	<-firstDone
+	if firstResponse.Code != http.StatusOK {
+		t.Fatalf("first conversion response = %d %q", firstResponse.Code, firstResponse.Body.String())
+	}
+}
+
+func TestCredentialWebHandlerAllowsDifferentAPIKeysConcurrently(t *testing.T) {
+	started := map[string]chan struct{}{
+		"key-one": make(chan struct{}, 1),
+		"key-two": make(chan struct{}, 1),
+	}
+	release := make(chan struct{})
+	handler, err := NewCredentialWebHandler(func(_ context.Context, apiKey, _ string) (uploadProcessor, error) {
+		return &gatedWebProcessor{started: started[apiKey], release: release}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type responseResult struct {
+		key      string
+		response *httptest.ResponseRecorder
+	}
+	results := make(chan responseResult, 2)
+	for _, key := range []string{"key-one", "key-two"} {
+		key := key
+		request := credentialConvertRequest(t, key)
+		go func() {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			results <- responseResult{key: key, response: response}
+		}()
+	}
+	waitForJobStart(t, started["key-one"])
+	waitForJobStart(t, started["key-two"])
+	close(release)
+	for range 2 {
+		result := <-results
+		if result.response.Code != http.StatusOK {
+			t.Fatalf("%s conversion response = %d %q", result.key, result.response.Code, result.response.Body.String())
+		}
+	}
+}
+
+func credentialConvertRequest(t *testing.T, apiKey string) *http.Request {
+	t.Helper()
+	body := new(bytes.Buffer)
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("pack", "pack.zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(part, "zip"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/convert", body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set(robloxAPIKeyHeader, apiKey)
+	request.Header.Set(robloxUserIDHeader, "123456")
+	return request
+}
+
+func waitForJobStart(t *testing.T, started <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("conversion did not start concurrently")
 	}
 }
 
