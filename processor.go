@@ -162,7 +162,6 @@ func (p *Processor) ProcessUpload(ctx context.Context, filename string, upload i
 	if err := ctx.Err(); err != nil {
 		return fail(err)
 	}
-	emitProgress(progress, ProgressEvent{Stage: ProgressReceiving, Message: "Receiving " + filepath.Base(filename)})
 	file, err := os.CreateTemp("", "autopack-upload-*.zip")
 	if err != nil {
 		return fail(fmt.Errorf("stage texture-pack upload: %w", err))
@@ -184,6 +183,11 @@ func (p *Processor) ProcessUpload(ctx context.Context, filename string, upload i
 	if written > p.maxUploadBytes {
 		return fail(fmt.Errorf("texture-pack upload exceeds %d-byte limit", p.maxUploadBytes))
 	}
+
+	emitProgress(progress, ProgressEvent{
+		Stage:   ProgressReceiving,
+		Message: "Received " + filepath.Base(filename),
+	})
 	result, err := p.ProcessPath(ctx, path, progress)
 	if err == nil {
 		result.PackName = filepath.Base(filename)

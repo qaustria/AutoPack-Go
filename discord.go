@@ -57,7 +57,7 @@ func (notifier *DiscordNotifier) Notify(ctx context.Context, notification PortNo
 	if notification.PackID == "" || len(notification.OutputJSON) == 0 || len(notification.PreviewPNG) == 0 {
 		return errors.New("Discord notification is incomplete")
 	}
-	content := fmt.Sprintf("**:exclamation: A Pack has been ported!**\nPack ID: `%s`\n```json\n%s\n```", notification.PackID, notification.OutputJSON)
+	content := fmt.Sprintf("`%s`\n%s", notification.PackID, notification.OutputJSON)
 	if len(content) > discordMessageLimit {
 		return fmt.Errorf("compressed pack JSON is too large for one Discord message (%d characters)", len(content))
 	}
