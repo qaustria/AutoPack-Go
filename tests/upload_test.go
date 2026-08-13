@@ -133,7 +133,8 @@ func TestAssetUploaderResolvesImportedModelToContainedMeshID(t *testing.T) {
 	if _, err := (rbxl.Encoder{Mode: rbxl.Model}).Encode(&importedModel, root); err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch {
 		case request.Method == http.MethodPost && request.URL.Path == "/assets/v1/assets":
 			response.Header().Set("Content-Type", "application/json")
@@ -142,6 +143,15 @@ func TestAssetUploaderResolvesImportedModelToContainedMeshID(t *testing.T) {
 			response.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(response, `{"path":"operations/import-op","done":true,"response":{"assetId":"9988","assetType":"Model"}}`)
 		case request.Method == http.MethodGet && request.URL.Path == "/asset-delivery-api/v1/assetId/9988":
+			if request.Header.Get("x-api-key") != "key" {
+				t.Errorf("asset delivery request did not include the API key")
+			}
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(response, `{"location":%q}`, server.URL+"/cdn/imported-model.rbxm")
+		case request.Method == http.MethodGet && request.URL.Path == "/cdn/imported-model.rbxm":
+			if request.Header.Get("x-api-key") != "" {
+				t.Errorf("temporary CDN request leaked the Roblox API key")
+			}
 			response.Header().Set("Content-Type", "application/octet-stream")
 			_, _ = response.Write(importedModel.Bytes())
 		default:

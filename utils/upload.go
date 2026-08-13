@@ -503,17 +503,55 @@ func (u *AssetUploader) resolveImportedModelMeshID(ctx context.Context, modelID 
 		return "", err
 	}
 	request.Header.Set("x-api-key", u.apiKey)
-	request.Header.Set("Accept", "application/octet-stream")
+	request.Header.Set("Accept", "application/json")
 	response, err := u.client.Do(request)
 	if err != nil {
-		return "", fmt.Errorf("download imported model: %w", err)
+		return "", fmt.Errorf("request imported model download location: %w", err)
 	}
-	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		defer response.Body.Close()
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
 		return "", &APIError{StatusCode: response.StatusCode, Status: response.Status, Body: strings.TrimSpace(string(body))}
 	}
-	root, _, err := rbxl.Decoder{}.Decode(io.LimitReader(response.Body, maxAssetUploadSize))
+	var delivery struct {
+		Location string `json:"location"`
+	}
+	decodeErr := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&delivery)
+	closeErr := response.Body.Close()
+	if decodeErr != nil {
+		return "", fmt.Errorf("decode imported model download location: %w", decodeErr)
+	}
+	if closeErr != nil {
+		return "", fmt.Errorf("close imported model location response: %w", closeErr)
+	}
+	delivery.Location = strings.TrimSpace(delivery.Location)
+	if delivery.Location == "" {
+		return "", errors.New("Roblox asset delivery response has no download location")
+	}
+	deliveryURL, err := url.Parse(delivery.Location)
+	if err != nil || !deliveryURL.IsAbs() || (deliveryURL.Scheme != "https" && deliveryURL.Scheme != "http") {
+		return "", fmt.Errorf("Roblox asset delivery returned an invalid download location %q", delivery.Location)
+	}
+
+	download, err := http.NewRequestWithContext(ctx, http.MethodGet, deliveryURL.String(), nil)
+	if err != nil {
+		return "", fmt.Errorf("create imported model download request: %w", err)
+	}
+	download.Header.Set("Accept", "application/octet-stream")
+	modelResponse, err := u.client.Do(download)
+	if err != nil {
+		return "", fmt.Errorf("download imported model content: %w", err)
+	}
+	defer modelResponse.Body.Close()
+	if modelResponse.StatusCode < 200 || modelResponse.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(modelResponse.Body, 64<<10))
+		return "", fmt.Errorf("download imported model content: %w", &APIError{
+			StatusCode: modelResponse.StatusCode,
+			Status:     modelResponse.Status,
+			Body:       strings.TrimSpace(string(body)),
+		})
+	}
+	root, _, err := rbxl.Decoder{Mode: rbxl.Model}.Decode(io.LimitReader(modelResponse.Body, maxAssetUploadSize))
 	if err != nil {
 		return "", fmt.Errorf("decode imported Roblox model: %w", err)
 	}
