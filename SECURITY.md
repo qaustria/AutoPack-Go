@@ -13,3 +13,11 @@ Please report security issues through a [private GitHub security advisory](https
 - Always deploy Cone behind HTTPS before accepting credentials over a network.
 
 Rotate a credential immediately if it is accidentally committed, pasted into an issue, or exposed in logs.
+
+## Untrusted texture packs
+
+Cone treats every uploaded archive and PNG as untrusted. The server bounds the
+compressed request, ZIP entry count, declared expansion, per-entry extraction,
+PNG dimensions, and total concurrent conversions. The Raspberry Pi deployment
+also places nginx in front of Cone for request buffering, connection limits,
+rate limits, and body timeouts. Keep both layers enabled on public deployments.

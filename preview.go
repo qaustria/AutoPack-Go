@@ -7,8 +7,9 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
-	"os"
 	"strings"
+
+	"github.com/qaustria/AutoPack-Go/utils"
 )
 
 const (
@@ -32,17 +33,9 @@ func buildHotbarPreview(textures map[string]string) ([]byte, error) {
 		if path == "" {
 			return nil, fmt.Errorf("hotbar preview texture %q is missing", key)
 		}
-		file, err := os.Open(path)
+		texture, err := utils.DecodeTexturePNG(path)
 		if err != nil {
-			return nil, fmt.Errorf("open hotbar preview texture %q: %w", key, err)
-		}
-		texture, decodeErr := png.Decode(file)
-		closeErr := file.Close()
-		if decodeErr != nil {
-			return nil, fmt.Errorf("decode hotbar preview texture %q: %w", key, decodeErr)
-		}
-		if closeErr != nil {
-			return nil, fmt.Errorf("close hotbar preview texture %q: %w", key, closeErr)
+			return nil, fmt.Errorf("decode hotbar preview texture %q: %w", key, err)
 		}
 
 		x := previewMargin + index*(previewSlotSize+previewGap)

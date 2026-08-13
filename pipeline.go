@@ -396,17 +396,9 @@ func cachePipelineTextures(ctx context.Context, textures map[string]string, log 
 	logPipeline(log, fmt.Sprintf("Decoding and resizing %d textures", len(keys)))
 	if err := parallelFor(ctx, len(keys), preparationConcurrency(), func(index int) error {
 		key := keys[index]
-		file, err := os.Open(textures[key])
+		img, err := utils.DecodeTexturePNG(textures[key])
 		if err != nil {
-			return fmt.Errorf("open texture %q: %w", key, err)
-		}
-		img, decodeErr := png.Decode(file)
-		closeErr := file.Close()
-		if decodeErr != nil {
-			return fmt.Errorf("decode texture %q: %w", key, decodeErr)
-		}
-		if closeErr != nil {
-			return fmt.Errorf("close texture %q: %w", key, closeErr)
+			return fmt.Errorf("decode texture %q: %w", key, err)
 		}
 		entries[index].Resized = utils.ResizeTexture(img)
 		entries[index].AlphaNoiseThreshold = utils.RemoveBackgroundAlphaNoise(entries[index].Resized)

@@ -46,8 +46,15 @@ Successful web ports are appended to `data/cone.db`. Set
 original filename, timestamp, and compressed output JSON; it does not store the
 uploaded ZIP, Roblox API key, or preview image.
 
-Cone listens directly with Go's HTTP server. nginx is optional; a reverse proxy
-or Cloudflare Tunnel can point straight to `http://127.0.0.1:8080`.
+Cone listens directly with Go's HTTP server during local development. The Pi
+deployment keeps Cone private on `127.0.0.1:8080`, with nginx on port 80 and
+Cloudflare Tunnel targeting `http://localhost:80`. nginx bounds and
+buffers uploads while leaving Cone's streamed conversion logs unbuffered.
+
+Public uploads are limited to 128 MiB compressed, 256 MiB declared ZIP
+expansion, 4,096 archive entries, and 16 megapixels per decoded texture. The Pi
+allows one memory-heavy conversion at a time. Set `CONE_MAX_CONCURRENT_PORTS`
+from 1 to 32 for a larger server; the default outside the Pi deployment is 2.
 
 ## Run from the command line
 
@@ -93,9 +100,11 @@ go build ./...
 
 ## Raspberry Pi
 
-The repository includes ARMv7 and ARM64 builds used by `deploy-pi.sh`. On the Pi:
+The repository includes ARMv7 and ARM64 builds used by `deploy-pi.sh`. Install
+nginx once, then deploy without compiling on the Pi:
 
 ```bash
+sudo apt-get update && sudo apt-get install -y nginx
 cd ~/AutoPack-Go
 git pull --ff-only origin master
 ./deploy-pi.sh

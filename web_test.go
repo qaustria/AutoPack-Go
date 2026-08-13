@@ -331,6 +331,42 @@ func TestCredentialWebHandlerAllowsDifferentAPIKeysConcurrently(t *testing.T) {
 	}
 }
 
+func TestCredentialWebHandlerEnforcesGlobalPortLimit(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	handler, err := NewCredentialWebHandlerWithOptions(func(_ context.Context, _, _ string) (uploadProcessor, error) {
+		return &gatedWebProcessor{started: started, release: release}, nil
+	}, WebHandlerOptions{MaxConcurrentPorts: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstResponse := httptest.NewRecorder()
+	firstDone := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(firstResponse, credentialConvertRequest(t, "key-one"))
+		close(firstDone)
+	}()
+	waitForJobStart(t, started)
+
+	secondResponse := httptest.NewRecorder()
+	handler.ServeHTTP(secondResponse, credentialConvertRequest(t, "key-two"))
+	if secondResponse.Code != http.StatusTooManyRequests || !strings.Contains(secondResponse.Body.String(), "safe processing limit") {
+		t.Fatalf("global-limit response = %d %q", secondResponse.Code, secondResponse.Body.String())
+	}
+	close(release)
+	<-firstDone
+}
+
+func TestCredentialWebHandlerRejectsInvalidGlobalPortLimit(t *testing.T) {
+	_, err := NewCredentialWebHandlerWithOptions(func(_ context.Context, _, _ string) (uploadProcessor, error) {
+		return &stubWebProcessor{}, nil
+	}, WebHandlerOptions{})
+	if err == nil || !strings.Contains(err.Error(), "maximum concurrent ports") {
+		t.Fatalf("invalid limit error = %v", err)
+	}
+}
+
 func credentialConvertRequest(t *testing.T, apiKey string) *http.Request {
 	t.Helper()
 	body := new(bytes.Buffer)

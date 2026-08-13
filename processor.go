@@ -13,7 +13,7 @@ import (
 
 // DefaultMaxTexturePackUploadBytes is the default request-body limit a future
 // web handler can advertise and enforce before unpacking a texture pack.
-const DefaultMaxTexturePackUploadBytes int64 = 512 << 20
+const DefaultMaxTexturePackUploadBytes int64 = 128 << 20
 
 // ProgressStage is stable and JSON-friendly for a future web progress stream.
 type ProgressStage string

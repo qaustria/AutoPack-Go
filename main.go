@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -150,7 +151,13 @@ func runWeb(ctx context.Context) error {
 		return err
 	}
 	defer store.Close()
-	handler, err := NewCredentialWebHandlerWithServices(newWebRequestProcessor, notifier, store)
+	maxConcurrentPorts, err := configuredMaxConcurrentPorts()
+	if err != nil {
+		return err
+	}
+	handler, err := NewCredentialWebHandlerWithOptions(newWebRequestProcessor, WebHandlerOptions{
+		Notifier: notifier, Store: store, MaxConcurrentPorts: maxConcurrentPorts,
+	})
 	if err != nil {
 		return err
 	}
@@ -175,6 +182,7 @@ func runWeb(ctx context.Context) error {
 		fmt.Println("Discord notifications: enabled")
 	}
 	fmt.Println("Port history database:", store.Path())
+	fmt.Println("Maximum simultaneous ports:", maxConcurrentPorts)
 	fmt.Println("Press Ctrl+C to stop.")
 	select {
 	case err := <-result:
@@ -190,6 +198,18 @@ func runWeb(ctx context.Context) error {
 		}
 		return nil
 	}
+}
+
+func configuredMaxConcurrentPorts() (int, error) {
+	value := strings.TrimSpace(os.Getenv("CONE_MAX_CONCURRENT_PORTS"))
+	if value == "" {
+		return defaultMaxConcurrentPorts, nil
+	}
+	maximum, err := strconv.Atoi(value)
+	if err != nil || maximum < 1 || maximum > 32 {
+		return 0, errors.New("CONE_MAX_CONCURRENT_PORTS must be an integer from 1 to 32")
+	}
+	return maximum, nil
 }
 
 func selectedTexturePack(args []string) (string, error) {

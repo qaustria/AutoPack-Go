@@ -18,9 +18,9 @@ import (
 )
 
 const (
-	maxPackFiles         = 100_000
-	maxPackFileSize      = 128 << 20 // 128 MiB per entry.
-	maxPackExtractedSize = 1 << 30   // 1 GiB total.
+	maxPackFiles         = 4_096
+	maxPackFileSize      = 32 << 20  // 32 MiB per entry.
+	maxPackExtractedSize = 256 << 20 // 256 MiB total declared expansion.
 )
 
 // TexturePack is a temporarily extracted Minecraft 1.8.9 texture pack.
@@ -464,14 +464,5 @@ func renderPotion(overlay, bottle image.Image, outputPath string, tint color.NRG
 }
 
 func decodePNG(path string) (image.Image, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	img, err := png.Decode(file)
-	if err != nil {
-		return nil, fmt.Errorf("decode PNG %q: %w", path, err)
-	}
-	return img, nil
+	return DecodeTexturePNG(path)
 }

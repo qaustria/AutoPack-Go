@@ -30,9 +30,16 @@ type uploadProcessor interface {
 type requestProcessorFactory func(context.Context, string, string) (uploadProcessor, error)
 
 const (
-	robloxAPIKeyHeader = "X-Cone-Roblox-Api-Key"
-	robloxUserIDHeader = "X-Cone-Roblox-User-Id"
+	robloxAPIKeyHeader        = "X-Cone-Roblox-Api-Key"
+	robloxUserIDHeader        = "X-Cone-Roblox-User-Id"
+	defaultMaxConcurrentPorts = 2
 )
+
+type WebHandlerOptions struct {
+	Notifier           PortNotifier
+	Store              *packstore.Store
+	MaxConcurrentPorts int
+}
 
 type webHandler struct {
 	processor        uploadProcessor
@@ -42,6 +49,7 @@ type webHandler struct {
 	static           http.Handler
 	activeJobsMu     sync.Mutex
 	activeJobs       map[[sha256.Size]byte]struct{}
+	jobSlots         chan struct{}
 }
 
 type webStreamEvent struct {
@@ -60,7 +68,7 @@ func NewWebHandler(processor uploadProcessor) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load embedded web files: %w", err)
 	}
-	handler := newWebHandler(assets)
+	handler := newWebHandler(assets, defaultMaxConcurrentPorts)
 	handler.processor = processor
 	return handler.routes(), nil
 }
@@ -79,24 +87,36 @@ func NewCredentialWebHandlerWithNotifier(factory requestProcessorFactory, notifi
 // NewCredentialWebHandlerWithServices creates a public handler with optional
 // Discord notification and durable successful-port history.
 func NewCredentialWebHandlerWithServices(factory requestProcessorFactory, notifier PortNotifier, store *packstore.Store) (http.Handler, error) {
+	return NewCredentialWebHandlerWithOptions(factory, WebHandlerOptions{
+		Notifier: notifier, Store: store, MaxConcurrentPorts: defaultMaxConcurrentPorts,
+	})
+}
+
+// NewCredentialWebHandlerWithOptions creates a public handler with explicit
+// service dependencies and a process-wide conversion ceiling.
+func NewCredentialWebHandlerWithOptions(factory requestProcessorFactory, options WebHandlerOptions) (http.Handler, error) {
 	if factory == nil {
 		return nil, errors.New("web request processor factory is nil")
+	}
+	if options.MaxConcurrentPorts < 1 || options.MaxConcurrentPorts > 32 {
+		return nil, errors.New("maximum concurrent ports must be between 1 and 32")
 	}
 	assets, err := fs.Sub(embeddedWebFiles, "web")
 	if err != nil {
 		return nil, fmt.Errorf("load embedded web files: %w", err)
 	}
-	handler := newWebHandler(assets)
+	handler := newWebHandler(assets, options.MaxConcurrentPorts)
 	handler.processorFactory = factory
-	handler.notifier = notifier
-	handler.packStore = store
+	handler.notifier = options.Notifier
+	handler.packStore = options.Store
 	return handler.routes(), nil
 }
 
-func newWebHandler(assets fs.FS) *webHandler {
+func newWebHandler(assets fs.FS, maxConcurrentPorts int) *webHandler {
 	return &webHandler{
 		static:     http.FileServer(http.FS(assets)),
 		activeJobs: make(map[[sha256.Size]byte]struct{}),
+		jobSlots:   make(chan struct{}, maxConcurrentPorts),
 	}
 }
 
@@ -140,8 +160,8 @@ func (h *webHandler) convert(response http.ResponseWriter, request *http.Request
 		}
 		jobKey = sha256.Sum256([]byte(apiKey))
 	}
-	if !h.reserveJob(jobKey) {
-		http.Error(response, "another texture pack is already being processed with this Roblox API key", http.StatusTooManyRequests)
+	if err := h.reserveJob(jobKey); err != nil {
+		http.Error(response, err.Error(), http.StatusTooManyRequests)
 		return
 	}
 	defer h.releaseJob(jobKey)
@@ -226,22 +246,28 @@ func (h *webHandler) convert(response http.ResponseWriter, request *http.Request
 	})
 }
 
-// reserveJob rate-limits conversions per Roblox credential rather than per
-// Cone server. Only the SHA-256 digest is retained for the duration of a job;
-// the API key itself is never stored on the handler.
-func (h *webHandler) reserveJob(key [sha256.Size]byte) bool {
+// reserveJob prevents duplicate work per Roblox credential and caps total
+// conversion memory across all credentials. Only the SHA-256 key digest is
+// retained for the duration of a job.
+func (h *webHandler) reserveJob(key [sha256.Size]byte) error {
 	h.activeJobsMu.Lock()
 	defer h.activeJobsMu.Unlock()
 	if _, active := h.activeJobs[key]; active {
-		return false
+		return errors.New("another texture pack is already being processed with this Roblox API key")
+	}
+	select {
+	case h.jobSlots <- struct{}{}:
+	default:
+		return errors.New("Cone is at its safe processing limit; try again after a current port finishes")
 	}
 	h.activeJobs[key] = struct{}{}
-	return true
+	return nil
 }
 
 func (h *webHandler) releaseJob(key [sha256.Size]byte) {
 	h.activeJobsMu.Lock()
 	delete(h.activeJobs, key)
+	<-h.jobSlots
 	h.activeJobsMu.Unlock()
 }
 
