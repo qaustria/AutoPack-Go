@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -35,13 +36,17 @@ const (
 	robloxUserIDHeader        = "X-Cone-Roblox-User-Id"
 	batchIndexHeader          = "X-Cone-Batch-Index"
 	batchTotalHeader          = "X-Cone-Batch-Total"
+	batchTokenHeader          = "X-Cone-Batch-Token"
 	defaultMaxConcurrentPorts = 2
 )
+
+var errBatchAuthorization = errors.New("administrative batch credentials are invalid")
 
 type WebHandlerOptions struct {
 	Notifier           PortNotifier
 	Store              *packstore.Store
 	MaxConcurrentPorts int
+	BatchToken         string
 }
 
 type webHandler struct {
@@ -53,6 +58,7 @@ type webHandler struct {
 	activeJobsMu     sync.Mutex
 	activeJobs       map[[sha256.Size]byte]struct{}
 	jobSlots         chan struct{}
+	batchToken       string
 }
 
 type webStreamEvent struct {
@@ -72,7 +78,7 @@ func NewWebHandler(processor uploadProcessor) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load embedded web files: %w", err)
 	}
-	handler := newWebHandler(assets, defaultMaxConcurrentPorts)
+	handler := newWebHandler(assets, defaultMaxConcurrentPorts, "")
 	handler.processor = processor
 	return handler.routes(), nil
 }
@@ -105,22 +111,27 @@ func NewCredentialWebHandlerWithOptions(factory requestProcessorFactory, options
 	if options.MaxConcurrentPorts < 1 || options.MaxConcurrentPorts > 32 {
 		return nil, errors.New("maximum concurrent ports must be between 1 and 32")
 	}
+	options.BatchToken = strings.TrimSpace(options.BatchToken)
+	if options.BatchToken != "" && (len(options.BatchToken) < 32 || len(options.BatchToken) > 256) {
+		return nil, errors.New("administrative batch token must be between 32 and 256 characters")
+	}
 	assets, err := fs.Sub(embeddedWebFiles, "web")
 	if err != nil {
 		return nil, fmt.Errorf("load embedded web files: %w", err)
 	}
-	handler := newWebHandler(assets, options.MaxConcurrentPorts)
+	handler := newWebHandler(assets, options.MaxConcurrentPorts, options.BatchToken)
 	handler.processorFactory = factory
 	handler.notifier = options.Notifier
 	handler.packStore = options.Store
 	return handler.routes(), nil
 }
 
-func newWebHandler(assets fs.FS, maxConcurrentPorts int) *webHandler {
+func newWebHandler(assets fs.FS, maxConcurrentPorts int, batchToken string) *webHandler {
 	return &webHandler{
 		static:     http.FileServer(http.FS(assets)),
 		activeJobs: make(map[[sha256.Size]byte]struct{}),
 		jobSlots:   make(chan struct{}, maxConcurrentPorts),
+		batchToken: batchToken,
 	}
 }
 
@@ -149,9 +160,13 @@ func (h *webHandler) convert(response http.ResponseWriter, request *http.Request
 		return
 	}
 	processor := h.processor
-	batchIndex, batchTotal, err := batchPositionFromHeaders(request.Header)
+	batchIndex, batchTotal, err := batchPositionFromHeaders(request.Header, h.batchToken)
 	if err != nil {
-		http.Error(response, err.Error(), http.StatusBadRequest)
+		status := http.StatusBadRequest
+		if errors.Is(err, errBatchAuthorization) {
+			status = http.StatusForbidden
+		}
+		http.Error(response, err.Error(), status)
 		return
 	}
 	jobKey := sha256.Sum256([]byte("cone-shared-web-processor"))
@@ -256,14 +271,22 @@ func (h *webHandler) convert(response http.ResponseWriter, request *http.Request
 	})
 }
 
-func batchPositionFromHeaders(headers http.Header) (int, int, error) {
+func batchPositionFromHeaders(headers http.Header, configuredToken string) (int, int, error) {
 	indexValue := strings.TrimSpace(headers.Get(batchIndexHeader))
 	totalValue := strings.TrimSpace(headers.Get(batchTotalHeader))
+	providedToken := strings.TrimSpace(headers.Get(batchTokenHeader))
 	if indexValue == "" && totalValue == "" {
+		if providedToken != "" {
+			return 0, 0, errors.New("administrative batch token requires batch position headers")
+		}
 		return 0, 0, nil
 	}
 	if indexValue == "" || totalValue == "" {
 		return 0, 0, errors.New("batch index and total headers must be provided together")
+	}
+	if configuredToken == "" || providedToken == "" || len(configuredToken) != len(providedToken) ||
+		subtle.ConstantTimeCompare([]byte(configuredToken), []byte(providedToken)) != 1 {
+		return 0, 0, errBatchAuthorization
 	}
 	index, indexErr := strconv.Atoi(indexValue)
 	total, totalErr := strconv.Atoi(totalValue)

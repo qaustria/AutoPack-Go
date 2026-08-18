@@ -77,7 +77,7 @@ func TestWebHandlerServesFrontendWithSecurityHeaders(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("GET / status = %d", response.Code)
 	}
-	if !strings.Contains(response.Body.String(), "Drop texture pack here") {
+	if !strings.Contains(response.Body.String(), "Drop your texture pack here") {
 		t.Fatalf("frontend body is unexpected: %s", response.Body.String())
 	}
 	if !strings.Contains(response.Body.String(), `id="activity-log"`) {
@@ -127,6 +127,14 @@ func TestWebHandlerServesFrontendWithSecurityHeaders(t *testing.T) {
 	handler.ServeHTTP(fontResponse, fontRequest)
 	if fontResponse.Code != http.StatusOK || !strings.Contains(fontResponse.Header().Get("Content-Type"), "font/woff2") {
 		t.Fatalf("GET font = %d %q", fontResponse.Code, fontResponse.Header().Get("Content-Type"))
+	}
+	for _, path := range []string{"/fonts/FredokaOne-Regular.ttf", "/fonts/LuckiestGuy-Regular.ttf"} {
+		fontRequest := httptest.NewRequest(http.MethodGet, path, nil)
+		fontResponse := httptest.NewRecorder()
+		handler.ServeHTTP(fontResponse, fontRequest)
+		if fontResponse.Code != http.StatusOK || !strings.Contains(fontResponse.Header().Get("Content-Type"), "font/ttf") {
+			t.Fatalf("GET %s = %d %q", path, fontResponse.Code, fontResponse.Header().Get("Content-Type"))
+		}
 	}
 	for path, marker := range map[string]string{
 		"/styles.css": ".result-modal",
@@ -207,11 +215,12 @@ func TestCredentialWebHandlerUsesOnlyRequestCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	handler, err := NewCredentialWebHandlerWithServices(func(_ context.Context, apiKey, userID string) (uploadProcessor, error) {
+	const batchToken = "test-batch-token-with-at-least-32-characters"
+	handler, err := NewCredentialWebHandlerWithOptions(func(_ context.Context, apiKey, userID string) (uploadProcessor, error) {
 		captured.apiKey = apiKey
 		captured.userID = userID
 		return processor, nil
-	}, notifier, store)
+	}, WebHandlerOptions{Notifier: notifier, Store: store, MaxConcurrentPorts: 2, BatchToken: batchToken})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,6 +242,7 @@ func TestCredentialWebHandlerUsesOnlyRequestCredentials(t *testing.T) {
 	request.Header.Set(robloxUserIDHeader, "123456")
 	request.Header.Set(batchIndexHeader, "10")
 	request.Header.Set(batchTotalHeader, "100")
+	request.Header.Set(batchTokenHeader, batchToken)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -257,6 +267,26 @@ func TestCredentialWebHandlerUsesOnlyRequestCredentials(t *testing.T) {
 	record, found, err := store.Latest(context.Background(), "0123456789abcdef")
 	if err != nil || !found || record.PackName != "public.zip" || string(record.OutputJSON) != string(notifier.notification.OutputJSON) {
 		t.Fatalf("stored port = %#v, found=%v, err=%v", record, found, err)
+	}
+}
+
+func TestCredentialWebHandlerRejectsForgedBatchHeaders(t *testing.T) {
+	const batchToken = "test-batch-token-with-at-least-32-characters"
+	handler, err := NewCredentialWebHandlerWithOptions(func(_ context.Context, _, _ string) (uploadProcessor, error) {
+		t.Fatal("processor factory ran with forged batch headers")
+		return nil, nil
+	}, WebHandlerOptions{MaxConcurrentPorts: 1, BatchToken: batchToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := credentialConvertRequest(t, "request-key")
+	request.Header.Set(batchIndexHeader, "1")
+	request.Header.Set(batchTotalHeader, "10")
+	request.Header.Set(batchTokenHeader, "wrong-batch-token-with-at-least-32-chars")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("forged batch response = %d %q, want 403", response.Code, response.Body.String())
 	}
 }
 

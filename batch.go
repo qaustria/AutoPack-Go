@@ -98,6 +98,10 @@ func runBatch(ctx context.Context, args []string) error {
 	if err := validateBatchEndpoint(endpoint); err != nil {
 		return err
 	}
+	batchToken := strings.TrimSpace(os.Getenv("CONE_BATCH_TOKEN"))
+	if len(batchToken) < 32 || len(batchToken) > 256 {
+		return errors.New("CONE_BATCH_TOKEN must contain between 32 and 256 characters")
+	}
 	if err := os.MkdirAll(outputDir, 0o750); err != nil {
 		return fmt.Errorf("create batch output directory: %w", err)
 	}
@@ -133,7 +137,7 @@ func runBatch(ctx context.Context, args []string) error {
 			fmt.Printf("[%d/%d] FAILED %s: %v\n", index+1, len(queue), entry.Name, err)
 			continue
 		}
-		result, err := submitBatchPackWhenAvailable(ctx, client, endpoint, credentials, zipPath, filename, index+1, len(queue), func(progress ProgressEvent) {
+		result, err := submitBatchPackWhenAvailable(ctx, client, endpoint, credentials, batchToken, zipPath, filename, index+1, len(queue), func(progress ProgressEvent) {
 			message := progress.Message
 			if message == "" {
 				message = progress.Name
@@ -150,6 +154,12 @@ func runBatch(ctx context.Context, args []string) error {
 		})
 		_ = os.Remove(zipPath)
 		if err != nil {
+			if batchAuthenticationFailed(err) {
+				return fmt.Errorf(
+					"batch paused at [%d/%d] %s because Roblox rejected the credentials: %w; replace the API key or use an unmoderated owner, then rerun the same command to resume",
+					index+1, len(queue), entry.Name, err,
+				)
+			}
 			failed++
 			fmt.Printf("[%d/%d] FAILED %s: %v\n", index+1, len(queue), entry.Name, err)
 			continue
@@ -201,10 +211,22 @@ func (err *batchServerError) Error() string {
 	return "Cone returned " + err.Status + ": " + err.Message
 }
 
-func submitBatchPackWhenAvailable(ctx context.Context, client *http.Client, endpoint string, credentials robloxCredentials, zipPath, filename string, batchIndex, batchTotal int, progress ProgressFunc) (batchSubmitResult, error) {
+// Authentication failures affect every remaining pack, so continuing would
+// only hammer Roblox and hide the real problem behind hundreds of failures.
+// The completed checkpoint stays intact and the same command can resume once
+// working credentials are supplied.
+func batchAuthenticationFailed(err error) bool {
+	var serverError *batchServerError
+	if !errors.As(err, &serverError) {
+		return false
+	}
+	return serverError.StatusCode == http.StatusUnauthorized || serverError.StatusCode == http.StatusForbidden
+}
+
+func submitBatchPackWhenAvailable(ctx context.Context, client *http.Client, endpoint string, credentials robloxCredentials, batchToken, zipPath, filename string, batchIndex, batchTotal int, progress ProgressFunc) (batchSubmitResult, error) {
 	deadline := time.Now().Add(30 * time.Minute)
 	for {
-		result, err := submitBatchPack(ctx, client, endpoint, credentials, zipPath, filename, batchIndex, batchTotal, progress)
+		result, err := submitBatchPack(ctx, client, endpoint, credentials, batchToken, zipPath, filename, batchIndex, batchTotal, progress)
 		var serverError *batchServerError
 		if !errors.As(err, &serverError) || serverError.StatusCode != http.StatusTooManyRequests {
 			return result, err
@@ -227,7 +249,7 @@ func submitBatchPackWhenAvailable(ctx context.Context, client *http.Client, endp
 	}
 }
 
-func submitBatchPack(ctx context.Context, client *http.Client, endpoint string, credentials robloxCredentials, zipPath, filename string, batchIndex, batchTotal int, progress ProgressFunc) (batchSubmitResult, error) {
+func submitBatchPack(ctx context.Context, client *http.Client, endpoint string, credentials robloxCredentials, batchToken, zipPath, filename string, batchIndex, batchTotal int, progress ProgressFunc) (batchSubmitResult, error) {
 	file, err := os.Open(zipPath)
 	if err != nil {
 		return batchSubmitResult{}, fmt.Errorf("open queued pack: %w", err)
@@ -265,6 +287,7 @@ func submitBatchPack(ctx context.Context, client *http.Client, endpoint string, 
 	request.Header.Set(robloxUserIDHeader, credentials.UserID)
 	request.Header.Set(batchIndexHeader, strconv.Itoa(batchIndex))
 	request.Header.Set(batchTotalHeader, strconv.Itoa(batchTotal))
+	request.Header.Set(batchTokenHeader, batchToken)
 	response, err := client.Do(request)
 	if err != nil {
 		_ = reader.CloseWithError(err)

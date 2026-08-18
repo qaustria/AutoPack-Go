@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify tag matches Cone version
+        run: |
+          source_version=$(sed -n 's/^[[:space:]]*Version = "\([^"]*\)"/\1/p' utils/glb.go)
+          test "${GITHUB_REF_NAME}" = "v${source_version}"
+      - run: go test -race ./...
+      - run: go vet ./...
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: arm64
+            goarch: arm64
+            goarm: ""
+          - target: armv7
+            goarch: arm
+            goarm: "7"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build release archive
+        env:
+          BUILD_GOARCH: ${{ matrix.goarch }}
+          BUILD_GOARM: ${{ matrix.goarm }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          package="cone-v${version}-linux-${TARGET}"
+          mkdir -p "dist/${package}"
+          CGO_ENABLED=0 GOOS=linux GOARCH="${BUILD_GOARCH}" GOARM="${BUILD_GOARM}" \
+            go build -buildvcs=false -trimpath -ldflags='-s -w' -o "dist/${package}/cone" .
+          go run github.com/google/go-licenses@v1.6.0 save ./... --save_path="dist/${package}/licenses"
+          mkdir -p "dist/${package}/licenses/fonts"
+          cp web/fonts/*.txt web/fonts/FONTS.md "dist/${package}/licenses/fonts/"
+          cp LICENSE README.md THIRD_PARTY_NOTICES.md "dist/${package}/"
+          tar -C dist -czf "dist/${package}.tar.gz" "${package}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cone-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cone-*
+          path: dist
+          merge-multiple: true
+      - name: Create checksums
+        run: cd dist && sha256sum ./*.tar.gz > SHA256SUMS
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/*.tar.gz dist/SHA256SUMS \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --generate-notes \
+            --title "Cone ${GITHUB_REF_NAME}"

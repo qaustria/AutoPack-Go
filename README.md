@@ -1,5 +1,9 @@
 # Cone
 
+[![CI](https://github.com/qaustria/AutoPack-Go/actions/workflows/ci.yml/badge.svg)](https://github.com/qaustria/AutoPack-Go/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/qaustria/AutoPack-Go)](https://github.com/qaustria/AutoPack-Go/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
+
 Cone ports Minecraft 1.8.9 texture packs to Roblox. It finds supported item and block textures, resizes them to 512×512, creates edge-expanded texture variants, builds greedy-meshed item geometry, uploads the assets through Roblox Open Cloud, and returns the compressed JSON used by the game.
 
 ![Cone web interface](docs/cone-ui.png)
@@ -76,8 +80,14 @@ uses the same port-history database and Discord notification path as a normal
 website conversion.
 
 ```bash
+export CONE_BATCH_TOKEN="$(openssl rand -hex 32)"
 go run . batch 'https://docs.google.com/spreadsheets/d/SHEET_ID/edit#gid=0'
 ```
+
+The web server and batch command must receive the same `CONE_BATCH_TOKEN`.
+Without it, administrative batch metadata is rejected so public clients cannot
+forge batch progress in Discord notifications. Keep the token private and use a
+separate value from every Roblox or Discord credential.
 
 The sheet must be shared as **Anyone with the link → Viewer**, and download-link
 cells must contain their complete `https://...` URL. `ROBLOX_API_KEY` and
@@ -125,8 +135,25 @@ go build ./...
 
 ## Raspberry Pi
 
-The repository includes ARMv7 and ARM64 builds used by `deploy-pi.sh`. Install
-nginx once, then deploy without compiling on the Pi:
+Tagged releases provide ARMv7 and ARM64 archives with SHA-256 checksums and all
+required third-party license files. `deploy-pi.sh` downloads and verifies the
+release matching its configured Cone version, so the Pi does not compile Go.
+
+Store server-only values outside the checkout:
+
+```bash
+sudo install -d -m 0700 /etc/cone
+sudoedit /etc/cone/cone.env
+```
+
+Example `/etc/cone/cone.env`:
+
+```bash
+CONE_DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/REPLACE_ME
+CONE_BATCH_TOKEN=REPLACE_WITH_OPENSSL_RAND_HEX_32
+```
+
+Then install nginx once and deploy:
 
 ```bash
 sudo apt-get update && sudo apt-get install -y nginx
@@ -135,9 +162,15 @@ git pull --ff-only origin master
 ./deploy-pi.sh
 ```
 
+Set `CONE_VERSION` only when intentionally deploying a different published
+version, for example `sudo CONE_VERSION=1.5.0 ./deploy-pi.sh`.
+
 ## Security
 
 Never commit `.env.go`. See [SECURITY.md](SECURITY.md) for credential handling and private vulnerability reporting.
+
+Release archives include dependency licenses described in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## License
 
