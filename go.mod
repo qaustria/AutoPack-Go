@@ -1,9 +1,9 @@
 module github.com/qaustria/AutoPack-Go
 
-go 1.22
+go 1.24
 
 require (
-	github.com/klauspost/compress v1.17.11
+	github.com/klauspost/compress v1.19.2
 	github.com/robloxapi/rbxfile v0.6.5
 	go.etcd.io/bbolt v1.3.11
 )
