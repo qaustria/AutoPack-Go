@@ -58,7 +58,7 @@ jobs:
           cp web/fonts/*.txt web/fonts/FONTS.md "dist/${package}/licenses/fonts/"
           cp LICENSE README.md THIRD_PARTY_NOTICES.md "dist/${package}/"
           tar -C dist -czf "dist/${package}.tar.gz" "${package}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cone-${{ matrix.target }}
           path: dist/*.tar.gz
