@@ -160,6 +160,7 @@ func runWeb(ctx context.Context) error {
 	}
 	handler, err := NewCredentialWebHandlerWithOptions(newWebRequestProcessor, WebHandlerOptions{
 		Notifier: notifier, Store: store, MaxConcurrentPorts: maxConcurrentPorts,
+		BatchToken: strings.TrimSpace(os.Getenv("CONE_BATCH_TOKEN")),
 	})
 	if err != nil {
 		return err

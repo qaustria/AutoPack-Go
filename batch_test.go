@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -67,6 +68,26 @@ func TestMediaFireFolderKeyAndSourceIdentity(t *testing.T) {
 	}
 }
 
+func TestBatchAuthenticationFailed(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "unauthorized", err: &batchServerError{StatusCode: http.StatusUnauthorized}, want: true},
+		{name: "forbidden", err: fmt.Errorf("submit pack: %w", &batchServerError{StatusCode: http.StatusForbidden}), want: true},
+		{name: "bad pack", err: &batchServerError{StatusCode: http.StatusBadRequest}, want: false},
+		{name: "download", err: errors.New("download failed"), want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := batchAuthenticationFailed(test.err); got != test.want {
+				t.Fatalf("batchAuthenticationFailed() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 func TestRunBatchQueuesSequentiallyAndResumes(t *testing.T) {
 	zipBytes := testBatchZIP(t)
 	zipPath := filepath.Join(t.TempDir(), "pack.zip")
@@ -93,6 +114,10 @@ func TestRunBatchQueuesSequentiallyAndResumes(t *testing.T) {
 		case "/api/convert":
 			if request.Header.Get(robloxAPIKeyHeader) != "test-api-key" || request.Header.Get(robloxUserIDHeader) != "12345" {
 				http.Error(response, "bad credentials", http.StatusUnauthorized)
+				return
+			}
+			if request.Header.Get(batchTokenHeader) != "test-batch-token-with-at-least-32-characters" {
+				http.Error(response, "bad batch token", http.StatusForbidden)
 				return
 			}
 			current := active.Add(1)
@@ -126,6 +151,7 @@ func TestRunBatchQueuesSequentiallyAndResumes(t *testing.T) {
 	t.Setenv("ROBLOX_API_KEY", "test-api-key")
 	t.Setenv("ROBLOX_USER_ID", "12345")
 	t.Setenv("ROBLOX_GROUP_ID", "")
+	t.Setenv("CONE_BATCH_TOKEN", "test-batch-token-with-at-least-32-characters")
 	t.Setenv("CONE_BATCH_ENDPOINT", server.URL+"/api/convert")
 	temporary := t.TempDir()
 	statePath := filepath.Join(temporary, "state", "queue.json")

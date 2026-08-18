@@ -8,4 +8,6 @@ Cone welcomes focused bug fixes and performance improvements.
 4. Run `go test -race ./...`, `go vet ./...`, and `go build ./...`.
 5. Open a pull request explaining the behavior change and how it was tested.
 
-For mesh-output changes, include a small synthetic regression test. Do not commit copyrighted texture packs or generated Roblox assets.
+For mesh-output changes, include a small synthetic regression test. Do not
+commit copyrighted texture packs, generated Roblox assets, or compiled release
+binaries. Tagged-release automation builds binaries from the reviewed source.
