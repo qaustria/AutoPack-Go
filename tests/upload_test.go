@@ -24,6 +24,12 @@ import (
 
 const testMaxAssetUploadSize = 20 << 20
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
+}
+
 type testCreateAssetPayload struct {
 	AssetType       AssetType `json:"assetType"`
 	DisplayName     string    `json:"displayName"`
@@ -311,6 +317,63 @@ func TestAssetUploaderValidatesAndGrantsOpenUse(t *testing.T) {
 		if grant.GrantToDependencies {
 			t.Fatalf("Open Use grant included unsupported dependency propagation: %+v", grant)
 		}
+	}
+}
+
+func TestAssetUploaderRetriesTransientIntrospectionTransportFailures(t *testing.T) {
+	attempts := 0
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		attempts++
+		if attempts < 3 {
+			return nil, errors.New("simulated TLS handshake timeout")
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(
+				`{"enabled":true,"expired":false,"scopes":[{"name":"asset","operations":["read","write"]},{"name":"asset-permissions","operations":["write"]},{"name":"legacy-asset","operations":["manage"]}]}`,
+			)),
+			Request: request,
+		}, nil
+	})}
+	uploader, err := NewAssetUploader(UploaderConfig{
+		APIKey: "key", Creator: AssetCreator{UserID: "1"}, HTTPClient: client,
+		RetryBaseDelay: time.Millisecond, RetryMaxDelay: 2 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := uploader.ValidateOpenUsePermission(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 3 {
+		t.Fatalf("introspection attempts = %d, want 3", attempts)
+	}
+}
+
+func TestAssetUploaderDoesNotRetryRejectedAPIKey(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		attempts++
+		response.Header().Set("Content-Type", "application/json")
+		response.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(response, `{"code":16,"message":"Invalid API Key secret."}`)
+	}))
+	defer server.Close()
+	uploader, err := NewAssetUploader(UploaderConfig{
+		APIKey: "bad-key", Creator: AssetCreator{UserID: "1"}, BaseURL: server.URL,
+		HTTPClient: server.Client(), RetryBaseDelay: time.Millisecond, RetryMaxDelay: 2 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = uploader.ValidateOpenUsePermission(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "401 Unauthorized") {
+		t.Fatalf("validation error = %v, want 401", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("introspection attempts = %d, want 1", attempts)
 	}
 }
 

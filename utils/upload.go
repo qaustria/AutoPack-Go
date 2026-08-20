@@ -25,8 +25,11 @@ import (
 )
 
 const (
-	robloxAssetsBaseURL = "https://apis.roblox.com"
-	maxAssetUploadSize  = 20 << 20 // Roblox's documented 20 MB content limit.
+	robloxAssetsBaseURL              = "https://apis.roblox.com"
+	maxAssetUploadSize               = 20 << 20 // Roblox's documented 20 MB content limit.
+	defaultRobloxRequestTimeout      = 2 * time.Minute
+	defaultRobloxTLSHandshakeTimeout = 30 * time.Second
+	maxIntrospectionRetries          = 3
 )
 
 // AssetType is a Roblox Open Cloud asset type supported by this pipeline.
@@ -80,7 +83,8 @@ type UploaderConfig struct {
 	MaxConcurrentModels int
 
 	// A zero MaxRetries selects the default. Set it to -1 to disable retries.
-	// Retry delays are only used for HTTP 429 responses.
+	// Upload retries handle HTTP 429 responses. API-key validation also uses up
+	// to three retries for transient transport and upstream server failures.
 	MaxRetries     int
 	RetryBaseDelay time.Duration
 	RetryMaxDelay  time.Duration
@@ -256,7 +260,18 @@ func NewAssetUploader(config UploaderConfig) (*AssetUploader, error) {
 	}
 	client := config.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: 2 * time.Minute}
+		transport := &http.Transport{
+			Proxy:             http.ProxyFromEnvironment,
+			ForceAttemptHTTP2: true,
+		}
+		if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok {
+			transport = defaultTransport.Clone()
+		}
+		transport.TLSHandshakeTimeout = defaultRobloxTLSHandshakeTimeout
+		client = &http.Client{
+			Transport: transport,
+			Timeout:   defaultRobloxRequestTimeout,
+		}
 	}
 	pollInterval := config.PollInterval
 	if pollInterval == 0 {
@@ -360,19 +375,9 @@ func (u *AssetUploader) ValidateOpenUsePermission(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("encode Roblox API-key introspection: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, u.baseURL+"/api-keys/v1/introspect", bytes.NewReader(body))
+	result, err := u.inspectAPIKey(ctx, body)
 	if err != nil {
-		return fmt.Errorf("create Roblox API-key introspection request: %w", err)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json")
-	response, err := u.client.Do(request)
-	if err != nil {
-		return fmt.Errorf("inspect Roblox API key: %w", err)
-	}
-	var result apiKeyIntrospection
-	if err := decodeAPIResponse(response, &result); err != nil {
-		return fmt.Errorf("inspect Roblox API key: %w", err)
+		return err
 	}
 	if !result.Enabled || result.Expired {
 		return errors.New("Roblox API key is disabled or expired")
@@ -397,6 +402,75 @@ func (u *AssetUploader) ValidateOpenUsePermission(ctx context.Context) error {
 		return fmt.Errorf("Roblox API key is missing required permissions: %s", strings.Join(missing, ", "))
 	}
 	return nil
+}
+
+func (u *AssetUploader) inspectAPIKey(ctx context.Context, body []byte) (apiKeyIntrospection, error) {
+	retries := u.maxRetries
+	if retries > maxIntrospectionRetries {
+		retries = maxIntrospectionRetries
+	}
+	for attempt := 0; ; attempt++ {
+		result, retryable, err := u.inspectAPIKeyOnce(ctx, body)
+		if err == nil {
+			return result, nil
+		}
+		if ctx.Err() != nil {
+			return apiKeyIntrospection{}, fmt.Errorf("inspect Roblox API key: %w", ctx.Err())
+		}
+		if !retryable || attempt >= retries {
+			if retryable && attempt > 0 {
+				return apiKeyIntrospection{}, fmt.Errorf("inspect Roblox API key after %d attempts: %w", attempt+1, err)
+			}
+			return apiKeyIntrospection{}, fmt.Errorf("inspect Roblox API key: %w", err)
+		}
+		delay := u.retryBackoff(attempt)
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && apiErr.RetryAfter > delay {
+			delay = apiErr.RetryAfter
+		}
+		if err := sleepContext(ctx, delay); err != nil {
+			return apiKeyIntrospection{}, fmt.Errorf("inspect Roblox API key: %w", err)
+		}
+	}
+}
+
+func (u *AssetUploader) inspectAPIKeyOnce(ctx context.Context, body []byte) (apiKeyIntrospection, bool, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, u.baseURL+"/api-keys/v1/introspect", bytes.NewReader(body))
+	if err != nil {
+		return apiKeyIntrospection{}, false, fmt.Errorf("create Roblox API-key introspection request: %w", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json")
+	response, err := u.client.Do(request)
+	if err != nil {
+		return apiKeyIntrospection{}, true, err
+	}
+	var result apiKeyIntrospection
+	if err := decodeAPIResponse(response, &result); err != nil {
+		var apiErr *APIError
+		if errors.As(err, &apiErr) {
+			return apiKeyIntrospection{}, retryableIntrospectionStatus(apiErr.StatusCode), err
+		}
+		// A proxy or upstream edge can occasionally return a truncated/non-JSON
+		// success body. Replaying this read-only validation request is safe.
+		return apiKeyIntrospection{}, true, err
+	}
+	return result, false, nil
+}
+
+func retryableIntrospectionStatus(status int) bool {
+	switch status {
+	case http.StatusRequestTimeout,
+		http.StatusTooEarly,
+		http.StatusTooManyRequests,
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
 }
 
 func hasAPIKeyPermission(result apiKeyIntrospection, wantedName, wantedOperation string) bool {
@@ -947,6 +1021,14 @@ func (u *AssetUploader) retryDelay(err error, attempt int) (time.Duration, bool)
 	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusTooManyRequests || attempt >= u.maxRetries {
 		return 0, false
 	}
+	delay := u.retryBackoff(attempt)
+	if apiErr.RetryAfter > delay {
+		delay = apiErr.RetryAfter
+	}
+	return delay, true
+}
+
+func (u *AssetUploader) retryBackoff(attempt int) time.Duration {
 	delay := u.retryBase
 	for step := 0; step < attempt && delay < u.retryMax; step++ {
 		if delay > u.retryMax/2 {
@@ -958,10 +1040,7 @@ func (u *AssetUploader) retryDelay(err error, attempt int) (time.Duration, bool)
 	if delay > u.retryMax {
 		delay = u.retryMax
 	}
-	if apiErr.RetryAfter > delay {
-		delay = apiErr.RetryAfter
-	}
-	return delay, true
+	return delay
 }
 
 // noteRateLimit turns burst uploads into a short, shared leaky-bucket stream.

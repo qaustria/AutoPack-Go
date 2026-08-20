@@ -163,7 +163,7 @@ git pull --ff-only origin master
 ```
 
 Set `CONE_VERSION` only when intentionally deploying a different published
-version, for example `sudo CONE_VERSION=1.5.0 ./deploy-pi.sh`.
+version, for example `sudo CONE_VERSION=1.5.1 ./deploy-pi.sh`.
 
 ## Security
 
