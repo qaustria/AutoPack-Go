@@ -6,7 +6,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-cone_version=${CONE_VERSION:-1.5.0}
+cone_version=${CONE_VERSION:-1.5.1}
 case "$(uname -m)" in
     aarch64|arm64)
         release_target=arm64
